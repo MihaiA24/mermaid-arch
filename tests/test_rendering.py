@@ -11,8 +11,8 @@ import pytest
 from mermaid_arch.browser import BrowserSession, svg_to_pdf, svg_to_png
 from mermaid_arch.checks import check_svg, svg_size
 from mermaid_arch.mermaid import render_mermaid
-from mermaid_arch.models import DiagramError, RenderOptions
-from mermaid_arch.pipeline import render_source
+from mermaid_arch.models import DiagramError, Engine, RenderOptions
+from mermaid_arch.pipeline import Result, render_source
 
 
 @pytest.mark.parametrize(
@@ -187,6 +187,50 @@ def test_theme_css_discarded_by_mermaid_is_disclosed(browser_session) -> None:
     )
     [diagnostic] = render_mermaid(browser_session, source).warnings
     assert (diagnostic.code, diagnostic.line) == ("mermaid/theme-css-dropped", 3)
+
+
+@pytest.mark.browser
+def test_theme_css_root_addresses_the_svg(browser_session) -> None:
+    source = "---\nconfig:\n  themeCSS: ':root { --paper: 7; }'\n---\nflowchart TB\n a --> b"
+    assert "#mermaid-arch{--paper:7;}" in render_mermaid(browser_session, source).svg
+
+
+@pytest.mark.browser
+def test_named_edge_path_carries_its_class(browser_session) -> None:
+    source = "flowchart LR\n a read@--> b\n a --> c\n class read data"
+    root = ET.fromstring(render_mermaid(browser_session, source).svg)
+    classes = {
+        path.get("data-id"): path.get("class", "").split()
+        for path in root.iter("{http://www.w3.org/2000/svg}path")
+        if path.get("data-edge")
+    }
+    assert [edge for edge, names in classes.items() if "data" in names] == ["read"]
+
+
+@pytest.mark.browser
+def test_pinned_pack_is_read_from_its_own_cache_file(
+    browser_session, icons, tmp_path: Path
+) -> None:
+    pinned = {
+        "prefix": "test",
+        "width": 24,
+        "height": 24,
+        "lastModified": 1600000000,
+        "icons": {"retired": {"body": '<path d="M1 1h2v2H1z"/>'}},
+    }
+    (tmp_path / "icons" / "test@1.2.3.json").write_text(json.dumps(pinned))
+    source = 'flowchart TB\n a@{ icon: "test:retired", label: "Old" }'
+    result = render_mermaid(browser_session, source, icon_packs={"test": "test@1.2.3"})
+    assert "M1 1h2v2H1z" in result.svg
+    assert result.icon_packs == {"test@1.2.3": 1600000000}
+
+
+def test_receipt_separates_a_pack_from_its_pin() -> None:
+    result = Result(Path("a.mmd"), Engine.MERMAID, (), (), {"mdi@1.2.3": 5, "logos": None})
+    assert result.to_json()["icon_packs"] == [
+        {"prefix": "logos", "version": None, "last_modified": None},
+        {"prefix": "mdi", "version": "1.2.3", "last_modified": 5},
+    ]
 
 
 @pytest.mark.browser

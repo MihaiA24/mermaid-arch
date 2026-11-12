@@ -11,17 +11,19 @@
   Frontmatter overrides the file per key, and a `theme` in the file pins the theme as
   frontmatter does. Record the full render command, flags included, in each source's
   `%% Render:` comment.
-- **themeCSS.** Mermaid nests every selector under the SVG root, so style its descendants and
-  set the paper colour with `--background`. In frontmatter use descendant selectors: Mermaid
-  discards a frontmatter string containing `<`, `>` or `url(data:`, reported as
-  `mermaid/theme-css-dropped`; the `--config` file accepts `>`. For one SVG that follows the
-  reader's theme, pair each rule with a dark override; PNG and PDF capture the light rules.
+- **themeCSS.** `:root` addresses the SVG itself: declare CSS variables and the canvas
+  `background` there; Mermaid nests every other selector under it. In frontmatter use
+  descendant selectors: Mermaid discards a frontmatter string containing `<`, `>` or
+  `url(data:`, reported as `mermaid/theme-css-dropped`; the `--config` file accepts `>`. For
+  one SVG that follows the reader's theme, override the variables in a dark media query; PNG
+  and PDF capture the light rules.
 
   ```css
-  .node.app rect { fill: #eff6ff !important; stroke: #2563eb !important; }
+  :root { --app: #2563eb; --app-fill: #eff6ff; background: #f8fafc; }
   @media (prefers-color-scheme: dark) {
-    .node.app rect { fill: #1c2d46 !important; stroke: #93c5fd !important; }
+    :root { --app: #93c5fd; --app-fill: #1c2d46; background: #0f172a; }
   }
+  .node.app rect { fill: var(--app-fill) !important; stroke: var(--app) !important; }
   ```
 
 - **Layout.** dagre is the default; `config.layout: elk` selects the bundled ELK, which routes
@@ -36,7 +38,8 @@
 - **Icons.** Use `node@{ icon: "mdi:account", form: "rounded", label: "Customer", pos: "b", h: 44 }`.
   The renderer discovers and caches Iconify packs automatically; unknown names fail with
   suggestions instead of becoming a question-mark tile. Brand icons come from `logos`, role
-  icons from `mdi`. First use requires network access; cached packs work offline.
+  icons from `mdi`. First use requires network access; cached packs work offline. When renders
+  must match across machines, pin a pack to its npm release: `--icon-pack mdi=mdi@1.2.3`.
 - **Label icons.** An icon beside a title is written inside the label: `api["fas:fa-server API"]`.
   Mermaid accepts only the pack names `fa`, `fas`, `far` and `fab` there, with `fa-` before the
   icon name. `fa` draws Font Awesome 4; `fas`, `far` and `fab` draw Font Awesome 6 solid,
@@ -57,6 +60,9 @@
   with a stroke-only `classDef`, because a `fill` floods the edge's curve. Choose ids outside
   Mermaid's keywords, such as `call` and `end`. A named edge keeps its style when edges are
   added; `linkStyle` indices follow declaration order, invisible links included, and shift.
+  The class name also lands on the edge's path, so a shared look colours arrows by role:
+  `.flowchart-link.store { stroke: var(--store) !important; }`, with
+  `.arrowMarkerPath { fill: context-stroke; stroke: none; }` for matching arrowheads.
 - **Fonts.** Keep the default font unless a specific font has been verified in the actual
   renderer. Some Mermaid theme paths discard hyphenated font-family values; label measurement
   can then disagree with the intended font.

@@ -75,6 +75,7 @@ def test_output_inference_and_check_writes_nothing(tmp_path: Path, capsys) -> No
         ["--background", "white;display:none"],
         ["--config", "missing.json"],
         ["--icon-pack", "fas"],
+        ["--icon-pack", "fas=mdi@1"],
     ],
 )
 def test_usage_errors_are_exit_two(extra: list[str]) -> None:

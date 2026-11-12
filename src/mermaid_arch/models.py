@@ -104,7 +104,7 @@ class RenderOptions:
     scale: float = 2.0  # PNG device pixel ratio
     background: str = "white"  # CSS colour behind PNG, PDF and the HTML light canvas
     mermaid_config: Mapping[str, object] | None = None  # Mermaid only: the shared --config file
-    # Mermaid only: pack name written in a source -> Iconify prefix that serves it
+    # Mermaid only: pack name written in a source -> Iconify `prefix` or `prefix@version`
     icon_packs: Mapping[str, str] = field(default_factory=dict)
 
 
@@ -112,7 +112,8 @@ class RenderOptions:
 class SvgResult:
     """A rendered diagram: well-formed standalone SVG XML with a viewBox, plus warnings.
 
-    `icon_packs` maps each Iconify prefix drawn from to that pack's `lastModified` stamp.
+    `icon_packs` maps each Iconify pack drawn from, as `prefix` or `prefix@version`, to that
+    pack's `lastModified` stamp.
     """
 
     svg: str

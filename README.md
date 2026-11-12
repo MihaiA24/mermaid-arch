@@ -32,8 +32,10 @@ browser blocks external requests during rendering. D2 itself can fetch remote as
 use trusted sources and local assets. Referenced Iconify packs download once from unpkg into
 the cache; no icon pack is downloaded for a diagram without icons. Packs retain their upstream
 licenses. A cached pack is never refreshed: `doctor` and the JSON receipt report its Iconify
-`lastModified`, which explains icons that differ between machines. To work offline, populate
-the cache beforehand with each pack's `icons.json`, named `<prefix>.json` (for example
+`lastModified`, which explains icons that differ between machines. `--icon-pack mdi=mdi@1.2.3`
+pins a pack to one npm release, cached under its own name, so every machine draws the same
+icons. To work offline, populate the cache beforehand with each pack's `icons.json`, named
+`<prefix>.json` or, for a pinned pack, `<prefix>@<version>.json` (for example
 `~/.cache/mermaid-arch/icons/mdi.json`). The generated HTML needs no renderer, browser
 extension, server or network connection.
 
@@ -42,7 +44,7 @@ extension, server or network connection.
 ```sh
 mermaid-arch render docs/architecture.mmd -f svg -f png -f html --json
 mermaid-arch render docs/architecture.d2 --layout elk --theme 0 --dark-theme 200 --pad 40
-mermaid-arch render docs/*.mmd --config docs/mermaid.json --icon-pack fas=mdi
+mermaid-arch render docs/*.mmd --config docs/mermaid.json --icon-pack fas=mdi@1.2.3
 mermaid-arch render docs/architecture.d2 -o /tmp/architecture.pdf
 mermaid-arch render docs/overview.d2 docs/pipeline.d2 --out-dir build/diagrams
 mermaid-arch check docs/architecture.mmd docs/architecture.d2 --json
@@ -72,11 +74,15 @@ layout name it does not register falls back to dagre with a warning.
 Several Mermaid sources share one look through `--config FILE`: a Mermaid config in JSON, as
 for `mmdc -c`, that holds the theme, spacing and `themeCSS` once. It counts as frontmatter
 common to every source: a source's own frontmatter overrides it per key, and a `theme` in it
-pins the theme. `--icon-pack NAME=PREFIX` serves an Iconify pack under another name. Mermaid
-draws `fas:fa-name` inside label text from a pack registered as `fas`, so `--icon-pack fas=mdi`
-puts `mdi:account` beside a title when the label says `fas:fa-account`. Without the flag, `fa`
-is Iconify's Font Awesome 4 pack and `fas`, `far` and `fab` are Font Awesome 6 solid, regular
-and brands.
+pins the theme. In its `themeCSS`, as in a source's, `:root` is the SVG itself, so the look can
+paint the canvas and declare CSS variables; a `class` given to a named edge is also put on the
+edge's path, so the same CSS colours arrows by role.
+
+`--icon-pack NAME=PREFIX[@X.Y.Z]` serves an Iconify pack under another name. Mermaid draws
+`fas:fa-name` inside label text from a pack registered as `fas`, so `--icon-pack fas=mdi` puts
+`mdi:account` beside a title when the label says `fas:fa-account`. Without the flag, `fa` is
+Iconify's Font Awesome 4 pack and `fas`, `far` and `fab` are Font Awesome 6 solid, regular and
+brands.
 
 ### Checked delivery
 

@@ -62,8 +62,9 @@ class Result:
             "outputs": [output.to_json() for output in self.outputs],
             "diagnostics": [diagnostic.to_json() for diagnostic in self.diagnostics],
             "icon_packs": [
-                {"prefix": prefix, "last_modified": stamp}
-                for prefix, stamp in sorted(self.icon_packs.items())
+                {"prefix": prefix, "version": version or None, "last_modified": stamp}
+                for spec, stamp in sorted(self.icon_packs.items())
+                for prefix, _, version in [spec.partition("@")]
             ],
         }
 

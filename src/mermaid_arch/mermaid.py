@@ -89,7 +89,20 @@ _RENDER = """async ({source, theme, site, packs}) => {
         const value = canonical(attribute.value);
         if (value !== attribute.value) attribute.value = value;
       }
-      if (element.localName === 'style') element.textContent = canonical(element.textContent);
+      // Mermaid nests themeCSS under the root's id, which leaves `:root` matching nothing.
+      // Point it at the root, so a theme can paint the canvas and declare variables there.
+      if (element.localName === 'style') {
+        element.textContent = canonical(element.textContent)
+          .replaceAll('#mermaid-arch :root', '#mermaid-arch');
+      }
+    }
+    // Mermaid applies a classDef to a named edge but leaves the class name off its path;
+    // with the name there, shared CSS can colour edges by role.
+    const diagram = await mermaid.mermaidAPI.getDiagramFromText(source);
+    for (const edge of diagram.db.getEdges?.() ?? []) {
+      if (!edge.id || !edge.classes?.length) continue;
+      const path = root.querySelector(`path[data-edge="true"][data-id="${CSS.escape(edge.id)}"]`);
+      if (path) path.classList.add(...edge.classes);
     }
     await document.fonts.ready;
     return {
@@ -126,7 +139,8 @@ def render_mermaid(
 ) -> SvgResult:
     """Render `source`; `config` is shared Mermaid config that frontmatter overrides per key.
 
-    `icon_packs` maps a pack name used in the source to the Iconify prefix that serves it.
+    `icon_packs` maps a pack name used in the source to the Iconify pack that serves it,
+    written `prefix` or, pinned to a release, `prefix@version`.
     """
     served = {**FONT_AWESOME_PACKS, **(icon_packs or {})}
     references: dict[str, list[tuple[str, str, int]]] = {}
@@ -147,9 +161,9 @@ def render_mermaid(
     problems: list[Diagnostic] = []
     modified: dict[str, int | None] = {}
     for name, uses in references.items():
-        prefix = served.get(name, name)
+        spec = served.get(name, name)
         try:
-            path, pack = _icon_pack(prefix)
+            path, pack = _icon_pack(spec)
         except DiagramError as exc:
             problems.extend(
                 error(d.code, d.message, line=uses[0][2], hint=d.hint) for d in exc.diagnostics
@@ -170,7 +184,7 @@ def render_mermaid(
                 )
         routes[f"/icons/{name}.json"] = path
         stamp = pack.get("lastModified")
-        modified[prefix] = stamp if isinstance(stamp, int) else None
+        modified[spec] = stamp if isinstance(stamp, int) else None
     if problems:
         raise DiagramError(*problems)
 
@@ -229,14 +243,16 @@ def render_mermaid(
     return SvgResult(svg, tuple(diagnostics), modified)
 
 
-def _icon_pack(prefix: str) -> tuple[Path, IconPack]:
-    path = icon_cache_dir() / f"{prefix}.json"
+def _icon_pack(spec: str) -> tuple[Path, IconPack]:
+    """Load Iconify pack `prefix` or pinned `prefix@version`, downloading it on first use."""
+    prefix = spec.partition("@")[0]
+    path = icon_cache_dir() / f"{spec}.json"
     try:
         if path.is_file():
             pack = json.loads(path.read_text(encoding="utf-8"))
         else:
             request = urllib.request.Request(
-                f"https://unpkg.com/@iconify-json/{prefix}/icons.json",
+                f"https://unpkg.com/@iconify-json/{spec}/icons.json",
                 headers={"User-Agent": "mermaid-arch/0.1"},
             )
             with urllib.request.urlopen(request, timeout=30) as response:
@@ -258,7 +274,7 @@ def _icon_pack(prefix: str) -> tuple[Path, IconPack]:
         raise DiagramError(
             error(
                 "mermaid/icon-pack-unavailable",
-                f"cannot load Iconify pack {prefix!r}: {exc}",
+                f"cannot load Iconify pack {spec!r}: {exc}",
                 hint=f"check the pack name and network access, or place its icons.json at {path}",
             )
         ) from None

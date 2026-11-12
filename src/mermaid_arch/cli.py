@@ -18,7 +18,7 @@ from mermaid_arch.models import OUTPUT_FORMATS, OutputFormat, RenderOptions
 from mermaid_arch.pipeline import Result, render_source
 
 _CSS_COLOUR = re.compile(r"[A-Za-z0-9#(),.% -]+")
-_ICON_PACK = re.compile(r"([a-z0-9-]+)=([a-z0-9-]+)")
+_ICON_PACK = re.compile(r"([a-z0-9-]+)=([a-z0-9-]+(?:@\d+\.\d+\.\d+)?)")
 _SUFFIX_FORMATS: dict[str, OutputFormat] = {f".{fmt}": fmt for fmt in OUTPUT_FORMATS}
 
 Job = tuple[Path, dict[OutputFormat, Path]]
@@ -123,9 +123,9 @@ def _engine_options(parser: argparse.ArgumentParser) -> None:
         dest="icon_packs",
         action="append",
         type=_icon_pack,
-        metavar="NAME=PREFIX",
-        help="serve Iconify pack PREFIX as Mermaid pack NAME; fas=mdi draws fas:fa-account "
-        "in a label from mdi:account",
+        metavar="NAME=PREFIX[@X.Y.Z]",
+        help="serve Iconify pack PREFIX, optionally pinned to release X.Y.Z, as Mermaid pack "
+        "NAME; fas=mdi draws fas:fa-account in a label from mdi:account",
     )
 
 
@@ -172,7 +172,9 @@ def _mermaid_config(value: str) -> dict[str, object]:
 def _icon_pack(value: str) -> tuple[str, str]:
     match = _ICON_PACK.fullmatch(value)
     if match is None:
-        raise argparse.ArgumentTypeError(f"{value!r} is not NAME=PREFIX, for example fas=mdi")
+        raise argparse.ArgumentTypeError(
+            f"{value!r} is not NAME=PREFIX or NAME=PREFIX@X.Y.Z, for example fas=mdi@1.2.3"
+        )
     return match[1], match[2]
 
 
