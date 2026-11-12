@@ -1,0 +1,55 @@
+# Evidence: illustrative online shop, not a discovered repository.
+# Render: mermaid-arch render layered-architecture.d2 -f svg -f png -f html
+# Cross-layer edges connect containers; child edges stay within their layer.
+vars: {
+  d2-config: {
+    layout-engine: elk
+    pad: 40
+    theme-id: 0
+    dark-theme-id: 200
+  }
+}
+direction: down
+classes: {
+  caller: {shape: person}
+  module: {shape: package}
+  store: {shape: cylinder}
+}
+customers: "1 · Customers" {
+  direction: right
+  shopper: Shopper {class: caller}
+  staff: Staff {class: caller}
+}
+edge: "2 · Edge" {
+  direction: right
+  storefront: Storefront
+  gateway: "API gateway"
+  storefront -> gateway: HTTPS
+}
+services: "3 · Services" {
+  direction: right
+  catalog: Catalogue {class: module}
+  checkout: Checkout {class: module}
+  fulfilment: Fulfilment {class: module}
+}
+data: "4 · Persistence" {
+  direction: right
+  postgres: PostgreSQL {class: store}
+  redis: Redis {class: store}
+  events: "Order events" {shape: queue}
+}
+partners: "External partners" {
+  direction: right
+  payment: "Payment provider"
+  carrier: "Shipping carrier"
+}
+customers -> edge: HTTPS
+edge -> services: "authenticated requests"
+services -> data: "SQL · cache · events"
+services -> partners: "payments · shipping"
+title: "Online shop — runtime architecture" {
+  shape: text
+  near: top-center
+  width: 650
+  style.font-size: 24
+}

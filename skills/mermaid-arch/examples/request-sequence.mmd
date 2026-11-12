@@ -1,0 +1,25 @@
+---
+title: Online shop — catalogue cache miss
+---
+%% Evidence: illustrative interaction; no measured timings.
+%% Render: mermaid-arch render request-sequence.mmd -f svg -f png -f html
+sequenceDiagram
+  actor Shopper
+  participant Web as Storefront
+  participant API as Catalogue API
+  participant Cache as Redis
+  participant DB as PostgreSQL
+  Shopper->>Web: Open product
+  Web->>API: GET /products/42
+  API->>Cache: GET product:42
+  alt Cache hit
+    Cache-->>API: Product
+  else Cache miss
+    Cache-->>API: Not found
+    API->>DB: Read product
+    DB-->>API: Product
+    API->>Cache: SET product:42 (TTL)
+    Cache-->>API: Stored
+  end
+  API-->>Web: Product JSON
+  Web-->>Shopper: Product page

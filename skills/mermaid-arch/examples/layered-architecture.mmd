@@ -1,0 +1,132 @@
+---
+title: Online shop — layered architecture
+config:
+  theme: base
+  look: classic
+  flowchart:
+    curve: basis
+    nodeSpacing: 36
+    rankSpacing: 72
+    padding: 14
+    wrappingWidth: 220
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#546E7A"
+    textColor: "#263238"
+    titleColor: "#263238"
+    edgeLabelBackground: "#FFFFFF"
+    clusterBkg: "#FAFAFA"
+    clusterBorder: "#90A4AE"
+  themeCSS: >-
+    .icon-shape p, .icon-shape .label, .icon-shape .labelBkg { background-color: transparent !important; }
+    .icon-shape .label rect { fill: transparent !important; }
+    .cluster-label .nodeLabel { font-weight: 700; }
+---
+flowchart TB
+  %% Online shop: the request path as four stacked layers, the asynchronous side path,
+  %% and the external partners.
+  %% Evidence: invented system. A code-backed diagram names the files it was derived
+  %% from here, for example deploy/compose.yaml, services/*/routes.py, docs/adr/.
+  %% Render: mermaid-arch render layered-architecture.mmd -f svg -f png --json
+  %% Layout rules:
+  %% - Layers connect subgraph-to-subgraph only; node edges stay inside their subgraph,
+  %%   otherwise the subgraph loses its own direction.
+  %% - Every subgraph runs direction LR: chains read left to right, and rows of peers are
+  %%   held in declared order by invisible ~~~ links.
+  %% - theme is pinned in the frontmatter, so the HTML viewer ships one variant.
+  %% - Edges are named (id@-->) and coloured by class, so a new edge never shifts
+  %%   another edge's style.
+
+  subgraph customers["1 · Customers"]
+    direction LR
+    shopper@{ icon: "mdi:account", form: "rounded", label: "<b>Shopper</b><br/>web browser", pos: "b", h: 44 }
+    mobile@{ icon: "mdi:cellphone", form: "rounded", label: "<b>Mobile app</b><br/>iOS · Android", pos: "b", h: 44 }
+    staff@{ icon: "mdi:account-tie", form: "rounded", label: "<b>Back-office staff</b><br/>catalogue · refunds", pos: "b", h: 44 }
+    shopper ~~~ mobile ~~~ staff
+  end
+
+  subgraph edge["2 · Edge"]
+    direction LR
+    cdn@{ icon: "logos:cloudflare-icon", form: "rounded", label: "<b>CDN</b><br/>static assets · TLS", pos: "b", h: 44 }
+    web@{ icon: "mdi:storefront-outline", form: "rounded", label: "<b>Storefront</b><br/>server-side rendering", pos: "b", h: 44 }
+    gateway@{ icon: "mdi:api", form: "rounded", label: "<b>API gateway</b><br/>auth · rate limits", pos: "b", h: 44 }
+    cdn toWeb@--> web toGateway@--> gateway
+  end
+
+  subgraph services["3 · Services"]
+    direction LR
+    catalog@{ icon: "mdi:tag-multiple", form: "rounded", label: "<b>Catalogue</b><br/>products · prices", pos: "b", h: 44 }
+    search@{ icon: "mdi:magnify", form: "rounded", label: "<b>Search</b><br/>facets · ranking", pos: "b", h: 44 }
+    cart@{ icon: "mdi:cart", form: "rounded", label: "<b>Cart</b><br/>sessions · totals", pos: "b", h: 44 }
+    checkout@{ icon: "mdi:cash-register", form: "rounded", label: "<b>Checkout</b><br/>orders · payments", pos: "b", h: 44 }
+    catalog ~~~ search ~~~ cart ~~~ checkout
+  end
+
+  subgraph data["4 · Data"]
+    direction LR
+    postgres@{ icon: "logos:postgresql", form: "rounded", label: "<b>PostgreSQL</b><br/>orders · catalogue", pos: "b", h: 48 }
+    redis@{ icon: "logos:redis", form: "rounded", label: "<b>Redis</b><br/>carts · sessions", pos: "b", h: 48 }
+    index@{ icon: "logos:opensearch-icon", form: "rounded", label: "<b>OpenSearch</b><br/>product index", pos: "b", h: 48 }
+    media@{ icon: "logos:aws-s3", form: "rounded", label: "<b>Object storage</b><br/>product images", pos: "b", h: 48 }
+    postgres ~~~ redis ~~~ index ~~~ media
+  end
+
+  subgraph fulfilment["Fulfilment — asynchronous"]
+    direction LR
+    bus@{ icon: "logos:kafka-icon", form: "rounded", label: "<b>Event bus</b><br/>order.placed", pos: "b", h: 44 }
+    warehouse@{ icon: "mdi:warehouse", form: "rounded", label: "<b>Warehouse service</b><br/>pick · pack · stock", pos: "b", h: 44 }
+    notify@{ icon: "mdi:email-outline", form: "rounded", label: "<b>Notifications</b><br/>order e-mails", pos: "b", h: 44 }
+    bus toWarehouse@--> warehouse
+    bus toNotify@--> notify
+  end
+
+  subgraph partners["External partners"]
+    direction LR
+    payments@{ icon: "mdi:credit-card-outline", form: "rounded", label: "<b>Payment provider</b><br/>card authorisation", pos: "b", h: 44 }
+    carrier@{ icon: "mdi:truck-delivery", form: "rounded", label: "<b>Shipping carrier</b><br/>labels · tracking", pos: "b", h: 44 }
+    mail@{ icon: "logos:sendgrid-icon", form: "rounded", label: "<b>E-mail delivery</b><br/>transactional mail", pos: "b", h: 44 }
+    payments ~~~ carrier ~~~ mail
+  end
+
+  %% Layer-boundary edges: subgraph to subgraph only.
+  customers enter@==>|HTTPS| edge
+  edge forward@==>|"REST · JSON"| services
+  services persist@==>|"SQL · cache · index"| data
+  services publish@-->|order.placed| fulfilment
+  services pay@-->|card payments| partners
+  fulfilment ship@-->|"labels · e-mails"| partners
+
+  %% Role palette: fill = icon tile, stroke = monochrome icon colour, color = label text.
+  classDef person fill:#ECEFF1,stroke:#37474F,color:#263238
+  classDef edgebox fill:#FCE4EC,stroke:#AD1457,color:#4A0E2B
+  classDef service fill:#E3F2FD,stroke:#1565C0,color:#0D47A1
+  classDef store fill:#E0F2F1,stroke:#00695C,color:#004D40
+  classDef async fill:#FFF3E0,stroke:#EF6C00,color:#BF360C
+  classDef external fill:#F3E5F5,stroke:#6A1B9A,color:#4A148C
+
+  class shopper,mobile,staff person
+  class cdn,web,gateway edgebox
+  class catalog,search,cart,checkout service
+  class postgres,redis,index,media store
+  class bus,warehouse,notify async
+  class payments,carrier,mail external
+
+  style customers fill:#FAFAFA,stroke:#546E7A,stroke-width:2px
+  style edge fill:#FFF5F8,stroke:#AD1457,stroke-width:2px
+  style services fill:#F5FAFF,stroke:#1565C0,stroke-width:2px
+  style data fill:#F2FAF9,stroke:#00695C,stroke-width:2px
+  style fulfilment fill:#FFF9F2,stroke:#EF6C00,stroke-width:2px
+  style partners fill:#FAF5FD,stroke:#6A1B9A,stroke-width:2px,stroke-dasharray:6 4
+
+  %% Edge colours: stroke-only classes, because a fill would flood the edge's curve.
+  classDef edgeLine stroke:#AD1457,stroke-width:2px
+  classDef asyncLine stroke:#EF6C00,stroke-width:2px
+  classDef edgeTrunk stroke:#AD1457,stroke-width:3px
+  classDef storeTrunk stroke:#00695C,stroke-width:3px
+  classDef externalLine stroke:#6A1B9A,stroke-width:2px
+
+  class toWeb,toGateway edgeLine
+  class toWarehouse,toNotify,publish asyncLine
+  class enter,forward edgeTrunk
+  class persist storeTrunk
+  class pay,ship externalLine

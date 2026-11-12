@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>@@TITLE@@</title>
+<style>
+:root { color-scheme: light; --bg:#f1f3f5; --fg:#20242a; --muted:#636d78; --border:#cbd1d8; --chrome:#fff; --paper:white; --canvas:var(--paper); }
+:root.dark { color-scheme:dark; --bg:#14171d; --fg:#e4e8ef; --muted:#a9b2c0; --border:#444c59; --chrome:#222731; }
+:root.dark.dual { --canvas:#1e1e2e; }
+* { box-sizing:border-box; }
+html,body { margin:0; height:100%; overflow:hidden; font:14px/1.4 system-ui,sans-serif; color:var(--fg); background:var(--bg); }
+body { display:flex; flex-direction:column; }
+header { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; padding:10px 16px; border-bottom:1px solid var(--border); background:var(--chrome); z-index:2; }
+h1 { flex:1 1 180px; font-size:15px; margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+nav { display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
+button { color:inherit; background:transparent; border:1px solid var(--border); border-radius:5px; padding:5px 9px; cursor:pointer; font:inherit; }
+button:hover { background:var(--bg); }
+button:focus-visible,summary:focus-visible { outline:2px solid #437ed0; outline-offset:2px; }
+#zoom { min-width:48px; text-align:center; font-variant-numeric:tabular-nums; color:var(--muted); }
+#viewport { flex:1; min-height:0; overflow:hidden; position:relative; touch-action:none; cursor:grab; background:var(--bg); }
+#viewport.dragging { cursor:grabbing; }
+#drawing { position:absolute; left:0; top:0; transform-origin:0 0; background:var(--canvas); }
+#drawing > svg { display:block; max-width:none !important; max-height:none !important; }
+#export-wrap { position:relative; }
+#export-menu { position:absolute; right:0; top:calc(100% + 8px); min-width:150px; background:var(--chrome); border:1px solid var(--border); padding:6px; border-radius:6px; box-shadow:0 6px 20px #0002; }
+#export-menu button { display:block; width:100%; text-align:left; border:0; }
+#message { position:fixed; z-index:4; bottom:16px; left:16px; right:16px; background:var(--chrome); padding:12px; border:1px solid var(--border); border-radius:6px; }
+#message button { float:right; margin-left:10px; }
+dialog { color:var(--fg); background:var(--chrome); border:1px solid var(--border); border-radius:8px; max-width:380px; padding:24px; }
+dialog::backdrop { background:#0006; }
+dialog h2 { font-size:18px; margin-top:0; }
+dl { display:grid; grid-template-columns:90px 1fr; gap:8px; } dd { margin:0; }
+[hidden] { display:none !important; }
+@media(max-width:480px) { header { padding:8px; gap:6px; } h1 { flex-basis:100%; } nav { width:100%; justify-content:space-between; gap:2px; } button { padding:5px 7px; } }
+@media print {
+  html,body { display:block; height:auto; overflow:visible; background:white; }
+  header,#message,dialog { display:none !important; }
+  #viewport { display:block; overflow:visible; }
+  #drawing { position:static; transform:none !important; width:100% !important; height:auto !important; }
+  #drawing > svg { width:100% !important; height:auto !important; max-height:95vh !important; }
+  @page { margin:10mm; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>@@TITLE@@</h1>
+  <nav aria-label="Diagram controls">
+    <button id="zoom-out" aria-label="Zoom out">−</button>
+    <output id="zoom" aria-live="off">100%</output>
+    <button id="zoom-in" aria-label="Zoom in">+</button>
+    <button id="fit" aria-label="Fit diagram">Fit</button>
+    <button id="theme" aria-label="Toggle light and dark theme">Dark</button>
+    <span id="export-wrap">
+      <button id="export" aria-haspopup="true" aria-expanded="false">Export</button>
+      <span id="export-menu" hidden>
+        <button data-export="svg">SVG</button>
+        <button data-export="png">PNG · 2×</button>
+        <button data-export="source">Source</button>
+        <button data-export="print">Print / PDF</button>
+      </span>
+    </span>
+    <button id="help" aria-label="Keyboard shortcuts">?</button>
+  </nav>
+</header>
+<main id="viewport" aria-label="Diagram. Drag to pan; use the wheel to zoom.">
+  <div id="drawing"></div>
+</main>
+<div id="message" role="status" hidden><button id="dismiss" aria-label="Dismiss message">×</button><span></span></div>
+<dialog id="shortcuts">
+  <h2>Diagram shortcuts</h2>
+  <dl><dt>+ / −</dt><dd>Zoom in / out</dd><dt>0 / 1</dt><dd>Fit / actual size</dd><dt>T</dt><dd>Toggle theme</dd><dt>E</dt><dd>Export menu</dd><dt>?</dt><dd>These shortcuts</dd></dl>
+  <p>Drag to pan. Wheel or pinch to zoom.</p>
+  <form method="dialog"><button>Close</button></form>
+</dialog>
+<noscript>This viewer needs JavaScript. The diagram source and SVG variants are embedded in this file.</noscript>
+<template id="light-svg">@@LIGHT@@</template>
+<template id="dark-svg">@@DARK@@</template>
+<script id="payload" type="application/json">@@DATA@@</script>
+<script>
+'use strict';
+const data = JSON.parse(document.getElementById('payload').textContent);
+const decode = text => new TextDecoder().decode(Uint8Array.from(atob(text.trim()), c => c.charCodeAt(0)));
+const variants = {
+  light: decode(document.getElementById('light-svg').content.textContent),
+  dark: document.getElementById('dark-svg').content.textContent.trim()
+};
+if (variants.dark) variants.dark = decode(variants.dark);
+const source = decode(data.source);
+const root = document.documentElement;
+root.style.setProperty('--paper', data.background);
+root.classList.toggle('dual', Boolean(variants.dark));
+const viewport = document.getElementById('viewport');
+const drawing = document.getElementById('drawing');
+const zoomLabel = document.getElementById('zoom');
+const themeButton = document.getElementById('theme');
+const menu = document.getElementById('export-menu');
+const exportButton = document.getElementById('export');
+const message = document.getElementById('message');
+const slug = data.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'diagram';
+const query = new URLSearchParams(location.search).get('theme');
+let theme = ['light','dark'].includes(query) ? query : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+let width = 1, height = 1, x = 0, y = 0, z = 1, touched = false;
+const pointers = new Map();
+function update() {
+  drawing.style.transform = `translate(${x}px, ${y}px) scale(${z})`;
+  zoomLabel.value = `${Math.round(z * 100)}%`;
+  zoomLabel.textContent = zoomLabel.value;
+}
+function mount() {
+  root.classList.toggle('dark', theme === 'dark');
+  themeButton.textContent = theme === 'dark' ? 'Light' : 'Dark';
+  const documentSVG = new DOMParser().parseFromString(variants[theme] || variants.light, 'image/svg+xml');
+  const svg = document.importNode(documentSVG.documentElement, true);
+  if (svg.localName !== 'svg') throw new Error('Embedded SVG could not be read');
+  const box = svg.viewBox.baseVal;
+  width = box.width || parseFloat(svg.getAttribute('width'));
+  height = box.height || parseFloat(svg.getAttribute('height'));
+  svg.setAttribute('width', width);
+  svg.setAttribute('height', height);
+  svg.style.width = `${width}px`;
+  svg.style.height = `${height}px`;
+  svg.style.maxWidth = 'none';
+  drawing.style.width = `${width}px`;
+  drawing.style.height = `${height}px`;
+  drawing.replaceChildren(svg);
+  update();
+}
+function fit() {
+  z = Math.min(1, Math.max(1, viewport.clientWidth - 32) / width, Math.max(1, viewport.clientHeight - 32) / height);
+  x = (viewport.clientWidth - width * z) / 2;
+  y = (viewport.clientHeight - height * z) / 2;
+  touched = false;
+  update();
+}
+function zoomAt(next, px, py) {
+  next = Math.max(0.02, Math.min(16, next));
+  x = px - (px - x) * next / z;
+  y = py - (py - y) * next / z;
+  z = next;
+  touched = true;
+  update();
+}
+function zoomBy(factor) { zoomAt(z * factor, viewport.clientWidth / 2, viewport.clientHeight / 2); }
+function toggleTheme() { theme = theme === 'dark' ? 'light' : 'dark'; mount(); }
+function toggleMenu() { menu.hidden = !menu.hidden; exportButton.setAttribute('aria-expanded', String(!menu.hidden)); }
+function notice(text) { message.querySelector('span').textContent = text; message.hidden = false; }
+function download(blob, suffix) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url; link.download = `${slug}.${suffix}`; link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+async function exportFile(kind) {
+  menu.hidden = true; exportButton.setAttribute('aria-expanded', 'false');
+  if (kind === 'print') { window.print(); return; }
+  if (kind === 'source') {
+    download(new Blob([source], {type:'text/plain;charset=utf-8'}), data.engine === 'd2' ? 'd2' : 'mmd'); return;
+  }
+  const svg = drawing.firstElementChild.cloneNode(true);
+  const xml = new XMLSerializer().serializeToString(svg);
+  const blob = new Blob([xml], {type:'image/svg+xml;charset=utf-8'});
+  if (kind === 'svg') { download(blob, 'svg'); return; }
+  let url;
+  try {
+    if (Math.max(width, height) * 2 > 16384) throw new Error('Image exceeds the canvas limit');
+    url = URL.createObjectURL(blob);
+    const image = new Image(); image.src = url; await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(width * 2); canvas.height = Math.ceil(height * 2);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = getComputedStyle(drawing).backgroundColor;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const png = await new Promise((resolve, reject) => canvas.toBlob(b => b ? resolve(b) : reject(new Error('PNG encoding failed')), 'image/png'));
+    download(png, 'png');
+  } catch (error) {
+    notice(`PNG export is unavailable in this browser (${error.message}). Use: mermaid-arch render <source> -f png`);
+  } finally { if (url) URL.revokeObjectURL(url); }
+}
+viewport.addEventListener('wheel', event => {
+  event.preventDefault();
+  const bounds = viewport.getBoundingClientRect();
+  zoomAt(z * Math.exp(-event.deltaY * 0.0015), event.clientX - bounds.left, event.clientY - bounds.top);
+}, {passive:false});
+function geometry() {
+  const values = [...pointers.values()];
+  if (values.length < 2) return {...values[0], distance:0};
+  const [a,b] = values;
+  return {x:(a.x+b.x)/2, y:(a.y+b.y)/2, distance:Math.hypot(a.x-b.x, a.y-b.y)};
+}
+viewport.addEventListener('pointerdown', event => {
+  if (event.button !== 0 || event.target.closest('a')) return;
+  pointers.set(event.pointerId, {x:event.clientX, y:event.clientY});
+  viewport.setPointerCapture(event.pointerId);
+  viewport.classList.add('dragging');
+});
+viewport.addEventListener('pointermove', event => {
+  if (!pointers.has(event.pointerId)) return;
+  const before = geometry();
+  pointers.set(event.pointerId, {x:event.clientX, y:event.clientY});
+  const after = geometry();
+  if (before.distance && after.distance) {
+    const bounds = viewport.getBoundingClientRect();
+    zoomAt(z * after.distance / before.distance, before.x - bounds.left, before.y - bounds.top);
+  }
+  x += after.x - before.x; y += after.y - before.y; touched = true; update();
+});
+for (const name of ['pointerup','pointercancel','lostpointercapture']) viewport.addEventListener(name, event => {
+  pointers.delete(event.pointerId);
+  if (!pointers.size) viewport.classList.remove('dragging');
+});
+document.getElementById('zoom-in').onclick = () => zoomBy(1.25);
+document.getElementById('zoom-out').onclick = () => zoomBy(0.8);
+document.getElementById('fit').onclick = fit;
+themeButton.onclick = toggleTheme;
+exportButton.onclick = toggleMenu;
+document.getElementById('dismiss').onclick = () => { message.hidden = true; };
+document.getElementById('help').onclick = () => document.getElementById('shortcuts').showModal();
+for (const button of document.querySelectorAll('[data-export]')) button.onclick = () => exportFile(button.dataset.export);
+document.addEventListener('keydown', event => {
+  if (event.ctrlKey || event.metaKey || event.altKey || /INPUT|TEXTAREA|SELECT/.test(event.target.tagName) || document.getElementById('shortcuts').open) return;
+  const key = event.key.toLowerCase();
+  if (['+','=','-','0','1','t','e','?'].includes(key)) event.preventDefault();
+  if (key === '+' || key === '=') zoomBy(1.25);
+  else if (key === '-') zoomBy(0.8);
+  else if (key === '0') fit();
+  else if (key === '1') zoomAt(1, viewport.clientWidth/2, viewport.clientHeight/2);
+  else if (key === 't') toggleTheme();
+  else if (key === 'e') toggleMenu();
+  else if (key === '?') document.getElementById('shortcuts').showModal();
+  else if (key === 'escape') { menu.hidden = true; message.hidden = true; }
+});
+window.addEventListener('resize', () => { if (!touched) fit(); });
+mount(); fit();
+</script>
+</body>
+</html>

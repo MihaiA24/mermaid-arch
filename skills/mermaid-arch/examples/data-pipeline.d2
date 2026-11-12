@@ -1,0 +1,27 @@
+# Evidence: illustrative order analytics pipeline.
+# Render: mermaid-arch render data-pipeline.d2 -f svg -f png -f html
+# Two horizontal stages joined at their containers keep the overview screen-shaped.
+vars: {d2-config: {layout-engine: elk; pad: 40; theme-id: 0; dark-theme-id: 200}}
+direction: down
+classes: {
+  input: {shape: document}
+  transform: {shape: step}
+  store: {shape: cylinder}
+}
+ingest: "1 · Validate and normalize" {
+  direction: right
+  orders: "Order events" {class: input; style.multiple: true}
+  validate: "Validate schema" {class: transform}
+  clean: "Normalize currency" {class: transform}
+  quarantine: "Invalid events" {shape: queue}
+  orders -> validate
+  validate -> clean: valid
+  validate -> quarantine: invalid
+}
+analytics: "2 · Store and aggregate" {
+  direction: right
+  warehouse: Warehouse {class: store}
+  report: "Daily revenue" {shape: document}
+  warehouse -> report: aggregate
+}
+ingest -> analytics: "normalized records"
