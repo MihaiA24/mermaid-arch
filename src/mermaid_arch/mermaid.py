@@ -51,6 +51,8 @@ _ELEMENT_BREAK = re.compile(r"(<(foreignObject|text)\b.*?</\2(?=>))|>(?=<)", re.
 _HTML = """<!doctype html><html><head><meta charset="utf-8"></head>
 <body><div id="container"></div><script src="/mermaid.js"></script></body></html>"""
 _RENDER = """async ({source, theme, site, packs}) => {
+  // The page is reused: drop the previous diagram, whose styles apply to the whole document.
+  document.getElementById('container').replaceChildren();
   // The shared --config file overrides the defaults above it, never the settings below it.
   const config = {
     handDrawnSeed: 1, layout: 'dagre', ...site,
@@ -188,20 +190,23 @@ def render_mermaid(
     if problems:
         raise DiagramError(*problems)
 
+    # One page per set of icon packs loads the 5 MB bundle once for a whole batch. Mermaid's
+    # config is rebuilt by every render; a page that failed is not trusted with another.
     try:
-        with session.page(routes) as page:
-            result = page.evaluate(
-                _RENDER,
-                {
-                    "source": source,
-                    "theme": theme,
-                    "site": dict(config or {}),
-                    "packs": list(references),
-                },
-            )
+        result = session.kept_page(routes).evaluate(
+            _RENDER,
+            {
+                "source": source,
+                "theme": theme,
+                "site": dict(config or {}),
+                "packs": list(references),
+            },
+        )
     except PlaywrightError as exc:
+        session.forget_page(routes)
         raise DiagramError(error("mermaid/render", str(exc))) from None
     if not result["ok"]:
+        session.forget_page(routes)
         message = result["message"]
         parsed = re.search(r"Parse error on line (\d+)", message)
         line = result.get("line")

@@ -6,12 +6,20 @@ import math
 import os
 import shutil
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path, PurePosixPath
 from typing import Literal, Self
 from urllib.parse import urlsplit
 
-from playwright.sync_api import Browser, BrowserType, Page, Playwright, Route, sync_playwright
+from playwright.sync_api import (
+    Browser,
+    BrowserContext,
+    BrowserType,
+    Page,
+    Playwright,
+    Route,
+    sync_playwright,
+)
 from playwright.sync_api import Error as PlaywrightError
 
 from mermaid_arch.checks import svg_size
@@ -19,6 +27,10 @@ from mermaid_arch.models import DiagramError, error
 
 INTERNAL_ORIGIN = "https://mermaid-arch.invalid"
 MAX_PNG_SIDE = 16384
+# Each kept page holds its scripts in memory; a batch rarely mixes more sets of files.
+_KEPT_PAGES = 4
+
+_Files = frozenset[tuple[str, bytes | str | Path]]
 
 _PATH_BROWSERS = (
     "chromium",
@@ -71,11 +83,13 @@ class BrowserSession:
         self._browser: Browser | None = None
         self._executable = ""
         self._origin = ""
+        self._kept: dict[_Files, tuple[BrowserContext, Page]] = {}
 
     def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc: object) -> None:
+        self._kept.clear()  # the contexts close with the browser
         if self._browser is not None:
             self._browser.close()
             self._browser = None
@@ -96,6 +110,42 @@ class BrowserSession:
         color_scheme: Literal["light", "dark"] = "light",
     ) -> Iterator[Page]:
         """A fresh page at `INTERNAL_ORIGIN + "/"` that can load `files` (URL path → body) only."""
+        context, page = self._open(files, scale, color_scheme)
+        try:
+            yield page
+        finally:
+            context.close()
+
+    def kept_page(self, files: Mapping[str, bytes | str | Path]) -> Page:
+        """A page like `page()`'s, kept open and returned again to every call with equal `files`.
+
+        Scripts the page loaded stay loaded, which is the point; so does any state they hold,
+        and the caller must reset it. Equal files, not overlapping ones, share a page: what an
+        earlier use fetched is then exactly what a fresh page could fetch.
+        """
+        key = frozenset(files.items())
+        if key not in self._kept:
+            if len(self._kept) >= _KEPT_PAGES:
+                self._close(next(iter(self._kept)))
+            self._kept[key] = self._open(dict(files), 1.0, "light")
+        return self._kept[key][1]
+
+    def forget_page(self, files: Mapping[str, bytes | str | Path]) -> None:
+        """Close the page kept for `files`; the next `kept_page(files)` opens a fresh one."""
+        self._close(frozenset(files.items()))
+
+    def _close(self, key: _Files) -> None:
+        kept = self._kept.pop(key, None)
+        if kept is not None:
+            with suppress(PlaywrightError):
+                kept[0].close()
+
+    def _open(
+        self,
+        files: Mapping[str, bytes | str | Path],
+        scale: float,
+        color_scheme: Literal["light", "dark"],
+    ) -> tuple[BrowserContext, Page]:
         context = self._launched().new_context(
             device_scale_factor=scale, color_scheme=color_scheme, service_workers="block"
         )
@@ -104,9 +154,10 @@ class BrowserSession:
             context.route_web_socket("**/*", lambda socket: socket.close())
             page = context.new_page()
             page.goto(INTERNAL_ORIGIN + "/")
-            yield page
-        finally:
+        except BaseException:
             context.close()
+            raise
+        return context, page
 
     def _launched(self) -> Browser:
         if self._browser is not None:

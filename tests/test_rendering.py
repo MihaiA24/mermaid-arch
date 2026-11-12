@@ -234,6 +234,20 @@ def test_receipt_separates_a_pack_from_its_pin() -> None:
 
 
 @pytest.mark.browser
+def test_reused_page_renders_like_a_fresh_one(browser_session) -> None:
+    plain = "flowchart LR\n x --> y"
+    themed = (
+        "---\nconfig:\n  theme: forest\n  layout: elk\n"
+        "  themeCSS: '.node rect { stroke-width: 9.25px; }'\n---\nflowchart TB\n a --> b"
+    )
+    render_mermaid(browser_session, themed, config={"flowchart": {"nodeSpacing": 120}})
+    reused = render_mermaid(browser_session, plain).svg
+    with pytest.raises(DiagramError):  # a failed render discards its page
+        render_mermaid(browser_session, "flowchart TB\n a --> ]]")
+    assert render_mermaid(browser_session, plain).svg == reused
+
+
+@pytest.mark.browser
 def test_page_blocks_unlisted_and_external_requests(browser_session) -> None:
     with browser_session.page({"/": "<html></html>", "/ok.json": '{"ok":true}'}) as page:
         result = page.evaluate("""async () => {
