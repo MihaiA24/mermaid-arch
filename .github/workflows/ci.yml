@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+      - run: uv sync --frozen
+      - run: uv run --frozen ruff check .
+      - run: uv run --frozen ruff format --check .
+      # The runner's Google Chrome renders; browser tests skip only when no Chromium launches.
+      - run: uv run --frozen pytest -q
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+      - name: Check the tag names the project version
+        run: test "$GITHUB_REF_NAME" = "v$(uv version --short)"
+      - run: uv build
+      - name: Publish the wheel and sdist as a GitHub release
+        run: gh release create "$GITHUB_REF_NAME" dist/*.whl dist/*.tar.gz --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

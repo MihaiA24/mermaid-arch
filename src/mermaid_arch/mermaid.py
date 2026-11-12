@@ -6,16 +6,16 @@ import difflib
 import json
 import os
 import re
-import tempfile
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
 from importlib.resources import files
 from pathlib import Path
-from typing import NotRequired, TypedDict, cast
+from typing import Any
 
 from playwright.sync_api import Error as PlaywrightError
 
+from mermaid_arch import __version__
 from mermaid_arch.browser import BrowserSession
 from mermaid_arch.models import Diagnostic, DiagramError, SvgResult, error, warning
 
@@ -115,13 +115,6 @@ _RENDER = """async ({source, theme, site, packs}) => {
     return {ok: false, message: String(e.message || e), line: e.hash?.loc?.first_line};
   }
 }"""
-
-
-class IconPack(TypedDict):
-    prefix: str
-    icons: dict[str, object]
-    aliases: NotRequired[dict[str, object]]
-    lastModified: NotRequired[int]
 
 
 def icon_cache_dir() -> Path:
@@ -248,33 +241,31 @@ def render_mermaid(
     return SvgResult(svg, tuple(diagnostics), modified)
 
 
-def _icon_pack(spec: str) -> tuple[Path, IconPack]:
+def _icon_pack(spec: str) -> tuple[Path, dict[str, Any]]:
     """Load Iconify pack `prefix` or pinned `prefix@version`, downloading it on first use."""
     prefix = spec.partition("@")[0]
     path = icon_cache_dir() / f"{spec}.json"
     try:
-        if path.is_file():
-            pack = json.loads(path.read_text(encoding="utf-8"))
+        cached = path.is_file()
+        if cached:
+            data = path.read_bytes()
         else:
             request = urllib.request.Request(
                 f"https://unpkg.com/@iconify-json/{spec}/icons.json",
-                headers={"User-Agent": "mermaid-arch/0.1"},
+                headers={"User-Agent": f"mermaid-arch/{__version__}"},
             )
             with urllib.request.urlopen(request, timeout=30) as response:
                 data = response.read()
-            pack = json.loads(data)
-            _validate_pack(pack, prefix)
+        pack = json.loads(data)
+        _validate_pack(pack, prefix)
+        if not cached:
             path.parent.mkdir(parents=True, exist_ok=True)
-            temporary: Path | None = None
+            temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
             try:
-                with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
-                    temporary = Path(stream.name)
-                    stream.write(data)
+                temporary.write_bytes(data)
                 os.replace(temporary, path)
             finally:
-                if temporary is not None:
-                    temporary.unlink(missing_ok=True)
-        _validate_pack(pack, prefix)
+                temporary.unlink(missing_ok=True)
     except (OSError, ValueError, urllib.error.URLError) as exc:
         raise DiagramError(
             error(
@@ -283,7 +274,7 @@ def _icon_pack(spec: str) -> tuple[Path, IconPack]:
                 hint=f"check the pack name and network access, or place its icons.json at {path}",
             )
         ) from None
-    return path, cast(IconPack, pack)
+    return path, pack
 
 
 def _validate_pack(pack: object, prefix: str) -> None:

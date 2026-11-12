@@ -1,0 +1,20 @@
+{
+  "name": "mermaid-arch",
+  "description": "Mermaid and D2 architecture diagrams as checked SVG, PNG, PDF and HTML",
+  "owner": {
+    "name": "Mihai Aftinescu"
+  },
+  "plugins": [
+    {
+      "name": "mermaid-arch",
+      "source": "./",
+      "description": "Author, render and repair repository-owned Mermaid and D2 architecture diagrams",
+      "author": {
+        "name": "Mihai Aftinescu"
+      },
+      "repository": "https://github.com/MihaiA24/mermaid-arch",
+      "license": "MIT",
+      "keywords": ["mermaid", "d2", "architecture", "diagrams"]
+    }
+  ]
+}

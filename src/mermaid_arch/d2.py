@@ -12,7 +12,6 @@ from d2_python import D2
 
 from mermaid_arch.models import Diagnostic, DiagramError, RenderOptions, SvgResult, error
 
-LAYOUTS = ("dagre", "elk")
 DEFAULT_LIGHT_THEME = "0"
 DEFAULT_DARK_THEME = "200"
 D2_TIMEOUT_SECONDS = 180
@@ -176,18 +175,7 @@ def _flags(
     *, layout: str | None, theme: str | None, dark_theme: str | None, pad: int | None
 ) -> list[str]:
     problems: list[Diagnostic] = []
-    args: list[str] = []
-    if layout is not None:
-        if layout in LAYOUTS:
-            args += ["--layout", layout]
-        else:
-            problems.append(
-                error(
-                    "d2/usage",
-                    f"unknown D2 layout {layout!r}",
-                    hint="use --layout dagre or --layout elk",
-                )
-            )
+    args: list[str] = [] if layout is None else ["--layout", layout]
     for flag, value in (("--theme", theme), ("--dark-theme", dark_theme)):
         if value is None:
             continue
@@ -202,14 +190,7 @@ def _flags(
                 )
             )
     if pad is not None:
-        if pad >= 0:
-            args += ["--pad", str(pad)]
-        else:
-            problems.append(
-                error(
-                    "d2/usage", f"--pad must be 0 or more, got {pad}", hint="pass --pad 0 or more"
-                )
-            )
+        args += ["--pad", str(pad)]
     if problems:
         raise DiagramError(*problems)
     return args

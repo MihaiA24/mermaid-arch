@@ -10,15 +10,26 @@ source paths, and layout/theme settings live in the diagrams themselves.
 
 ## Install
 
-Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Everything installs from GitHub;
+nothing is published to PyPI. Each `vX.Y.Z` release attaches a wheel and an sdist.
+
+As a command-line tool:
 
 ```sh
-uv tool install /path/to/mermaid-arch
+uv tool install git+https://github.com/MihaiA24/mermaid-arch          # main
+uv tool install git+https://github.com/MihaiA24/mermaid-arch@v0.1.0   # a release
 mermaid-arch doctor
 ```
 
-For a hosted repository, use `uv tool install 'git+<repository-url>'`. This checkout has no
-published package or configured remote. For development, use `uv tool install --editable .`.
+As a dependency of another project, for example a dev tool run as `uv run mermaid-arch render`:
+
+```sh
+uv add --dev "mermaid-arch @ https://github.com/MihaiA24/mermaid-arch/releases/download/v0.1.0/mermaid_arch-0.1.0-py3-none-any.whl"
+```
+
+The release wheel needs no git or build step, and pip accepts the same URL.
+`uv add --dev git+https://github.com/MihaiA24/mermaid-arch --tag v0.1.0` builds the same release
+from source. For development, use `uv tool install --editable .`.
 
 D2 is bundled by `d2-python-wrapper`; a `d2` on PATH takes precedence. Mermaid 12.3.0 is bundled
 in this package. A system Chromium/Chrome works; otherwise install the matching Playwright build:
@@ -133,7 +144,25 @@ that happens. CLI PNG rendering handles HTML labels directly in Chromium.
 
 ## Install the skill
 
-From the checkout (links keep edits in one place):
+The skill drives the CLI; install the CLI as above, or let the skill's setup step install it.
+
+Claude Code, as a plugin from this repository's marketplace:
+
+```sh
+claude plugin marketplace add MihaiA24/mermaid-arch   # append #v0.1.0 to stay on a release
+claude plugin install mermaid-arch@mermaid-arch
+```
+
+Inside a session, the same commands start with `/plugin`. Without a tag, the plugin follows
+`main`. On a machine without a GitHub SSH key, set `CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1`.
+
+Other agents, through the [skills](https://github.com/vercel-labs/skills) installer:
+
+```sh
+npx skills add MihaiA24/mermaid-arch --skill mermaid-arch
+```
+
+From a checkout, links keep edits in one place:
 
 ```sh
 mkdir -p ~/.agents/skills ~/.claude/skills
@@ -142,7 +171,6 @@ ln -s ../../.agents/skills/mermaid-arch ~/.claude/skills/mermaid-arch
 ```
 
 Use a new name/location if those paths already exist; do not overwrite another installation.
-Alternatively use `npx skills add <repository-url> --skill mermaid-arch` after hosting the repo.
 The skill and its references/examples live under [`skills/mermaid-arch`](skills/mermaid-arch/SKILL.md).
 Ask the agent to “use mermaid-arch to diagram the request path and keep the source in docs”.
 
@@ -170,5 +198,9 @@ network. To update Mermaid: download the chosen npm release's `dist/mermaid.min.
 `mermaid.py`, and replace the version, checksum and license in `THIRD_PARTY_NOTICES.md`.
 Re-render the examples and check both themes; SVG markup and parser behavior can change between
 releases.
+
+To release, set `version` in `pyproject.toml`, commit, then tag and push `vX.Y.Z`. CI runs the
+checks above, confirms the tag names the project version, builds, and publishes a GitHub release
+with the wheel and sdist.
 
 MIT; see [LICENSE](LICENSE) and [third-party notices](THIRD_PARTY_NOTICES.md).

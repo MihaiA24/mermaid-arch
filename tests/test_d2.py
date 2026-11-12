@@ -53,7 +53,7 @@ def test_explicit_pad_overrides_the_source_d2_config(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "kwargs",
-    [{"layout": "nope"}, {"theme": "dark"}, {"dark_theme": "mauve"}, {"theme": "9999"}],
+    [{"theme": "dark"}, {"dark_theme": "mauve"}, {"theme": "9999"}],
 )
 def test_bad_usage_is_a_d2_usage_error(tmp_path: Path, kwargs: dict[str, str]) -> None:
     source = _write(tmp_path, "a -> b\n")
