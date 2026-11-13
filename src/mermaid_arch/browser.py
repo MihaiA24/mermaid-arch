@@ -6,21 +6,13 @@ import math
 import os
 import re
 import shutil
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from pathlib import Path, PurePosixPath
 from typing import Literal, Self
 from urllib.parse import urlsplit
 
-from playwright.sync_api import (
-    Browser,
-    BrowserContext,
-    BrowserType,
-    Page,
-    Playwright,
-    Route,
-    sync_playwright,
-)
+from playwright.sync_api import Browser, BrowserType, Page, Playwright, Route, sync_playwright
 from playwright.sync_api import Error as PlaywrightError
 
 from mermaid_arch.checks import svg_size
@@ -85,11 +77,14 @@ class BrowserSession:
         self._browser: Browser | None = None
         self._executable = ""
         self._origin = ""
+        self._kept: tuple[str, Page] | None = None
+        self._kept_files: Mapping[str, bytes | str | Path] = {}
 
     def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc: object) -> None:
+        self._kept = None
         if self._browser is not None:
             with suppress(PlaywrightError):
                 self._browser.close()
@@ -111,33 +106,69 @@ class BrowserSession:
         color_scheme: Literal["light", "dark"] = "light",
     ) -> Iterator[Page]:
         """A fresh page at `INTERNAL_ORIGIN + "/"` that can load `files` (URL path → body) only."""
-        context, page = self._open(files, scale, color_scheme)
+        page = self._open(lambda route: _serve(route, files), scale, color_scheme)
         try:
+            page.goto(INTERNAL_ORIGIN + "/")
             yield page
         finally:
             # A browser that died has taken the context along; raising here would mask why.
             with suppress(PlaywrightError):
-                context.close()
+                page.context.close()
+
+    @contextmanager
+    def kept_page(self, files: Mapping[str, bytes | str | Path], *, script: str) -> Iterator[Page]:
+        """A page like `page()`'s that has run `script` first, in a tab kept from call to call.
+
+        Chromium holds `script` with the tab, so a large library is sent once, not once per
+        page. Each call still gets a new document, which shares no JavaScript state with the
+        last one. A call that raises closes the tab, and the next call opens another.
+        """
+        if self._kept is None or self._kept[0] != script or self._kept[1].is_closed():
+            self._drop_kept()
+            page = self._open(lambda route: _serve(route, self._kept_files), script=script)
+            self._kept = (script, page)
+        self._kept_files = files
+        page = self._kept[1]
+        try:
+            page.goto(INTERNAL_ORIGIN + "/")
+            yield page
+        except BaseException:
+            self._drop_kept()
+            raise
+
+    def _drop_kept(self) -> None:
+        kept, self._kept = self._kept, None
+        if kept is not None:
+            with suppress(PlaywrightError):
+                kept[1].context.close()
 
     def _open(
         self,
-        files: Mapping[str, bytes | str | Path],
-        scale: float,
-        color_scheme: Literal["light", "dark"],
-    ) -> tuple[BrowserContext, Page]:
+        serve: Callable[[Route], None],
+        scale: float = 1.0,
+        color_scheme: Literal["light", "dark"] = "light",
+        script: str | None = None,
+    ) -> Page:
+        """A blank page in a context of its own, where `serve` answers every request."""
         context = self._launched().new_context(
             device_scale_factor=scale, color_scheme=color_scheme, service_workers="block"
         )
         try:
-            context.route("**/*", lambda route: _serve(route, files))
+            context.route("**/*", serve)
             context.route_web_socket("**/*", lambda socket: socket.close())
             page = context.new_page()
-            page.goto(INTERNAL_ORIGIN + "/")
+            if script is not None:
+                # Chromium runs this at the start of every document while the CDP session has
+                # Page enabled. Playwright's add_init_script would wrap the script in a
+                # function, where a library's top-level `var` is no longer a global.
+                cdp = context.new_cdp_session(page)
+                cdp.send("Page.enable")
+                cdp.send("Page.addScriptToEvaluateOnNewDocument", {"source": script})
         except BaseException:
             with suppress(PlaywrightError):
                 context.close()
             raise
-        return context, page
+        return page
 
     def _launched(self) -> Browser:
         if self._browser is not None and self._browser.is_connected():

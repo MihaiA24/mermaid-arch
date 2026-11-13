@@ -9,6 +9,7 @@ import re
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
+from functools import cache
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
@@ -69,7 +70,7 @@ _THEME_CSS = re.compile(r"""(?:^|[\s{,"'])themeCSS["']?\s*:""", re.M)
 # their inline elements would be drawn.
 _ELEMENT_BREAK = re.compile(r"(<(foreignObject|text)\b.*?</\2(?=>))|>(?=<)", re.S)
 _HTML = """<!doctype html><html><head><meta charset="utf-8"></head>
-<body><div id="container"></div><script src="/mermaid.js"></script></body></html>"""
+<body><div id="container"></div></body></html>"""
 _FONT_TAG = "data-mermaid-arch-font"
 _RENDER = """args => {
   // Start the render after this call returns, so that Python can wait for it with a deadline
@@ -208,10 +209,7 @@ def render_mermaid(
                 icon = icon.removeprefix("fa-")
             references.setdefault(name, []).append((written, icon, number))
 
-    routes: dict[str, bytes | str | Path] = {
-        "/": _HTML,
-        "/mermaid.js": Path(str(files("mermaid_arch") / "assets" / "mermaid.min.js")),
-    }
+    routes: dict[str, bytes | str | Path] = {"/": _HTML}
     problems: list[Diagnostic] = []
     modified: dict[str, int | None] = {}
     for name, uses in references.items():
@@ -242,10 +240,10 @@ def render_mermaid(
     if problems:
         raise DiagramError(*problems)
 
-    # A fresh page per render: Mermaid keeps id counters in module state that page code cannot
-    # reset, so on a reused page a diagram's ids would depend on what rendered before it.
+    # A new document per render: Mermaid keeps id counters in module state that page code cannot
+    # reset, so in a reused one a diagram's ids would depend on what rendered before it.
     try:
-        with session.page(routes) as page:
+        with session.kept_page(routes, script=_bundle()) as page:
             page.evaluate(
                 _RENDER,
                 {
@@ -331,6 +329,11 @@ def render_mermaid(
         )
     svg = _ELEMENT_BREAK.sub(lambda m: m[1] or ">\n", result["svg"])
     return SvgResult(svg, tuple(diagnostics), modified, fonts)
+
+
+@cache
+def _bundle() -> str:
+    return (files("mermaid_arch") / "assets" / "mermaid.min.js").read_text(encoding="utf-8")
 
 
 def _fonts(page: Page) -> tuple[str, ...]:

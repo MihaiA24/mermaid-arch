@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 from playwright.sync_api import Page
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from mermaid_arch.browser import BrowserSession, _candidates, svg_to_pdf, svg_to_png
 
@@ -49,14 +50,39 @@ def test_session_outlives_a_chromium_that_died(in_own_thread) -> None:
 
     def scenario() -> None:
         with BrowserSession() as session:
+            with session.kept_page(files, script="var loaded = 1") as page:
+                assert page.evaluate("loaded") == 1
             with session.page(files) as page:
                 _kill_chromium(page)
 
             assert svg_to_png(session, SVG).startswith(b"\x89PNG\r\n\x1a\n")
+            with session.kept_page(files, script="var loaded = 1") as page:
+                assert page.evaluate("loaded") == 1
             with session.page(files) as page:
                 _kill_chromium(page)
 
     in_own_thread(scenario)
+
+
+@pytest.mark.browser
+def test_kept_page_gives_each_use_a_new_document_and_its_own_files(browser_session) -> None:
+    read = """async () => [
+      window.uses = (window.uses ?? 0) + 1, library, await (await fetch('/n.json')).json()
+    ]"""
+    for n, library in [(1, "a"), (2, "a"), (3, "b")]:
+        files = {"/": "<!doctype html>", "/n.json": str(n)}
+        with browser_session.kept_page(files, script=f"var library = '{library}'") as page:
+            assert page.evaluate(read) == [1, library, n]
+
+
+@pytest.mark.browser
+def test_kept_page_that_hung_is_replaced(browser_session) -> None:
+    files = {"/": "<!doctype html>"}
+    with pytest.raises(PlaywrightTimeoutError), browser_session.kept_page(files, script="") as page:
+        page.evaluate("() => { setTimeout(() => { for (;;); }) }")
+        page.wait_for_function("() => false", timeout=200)
+    with browser_session.kept_page(files, script="") as page:
+        assert page.evaluate("1 + 1") == 2
 
 
 @pytest.mark.browser

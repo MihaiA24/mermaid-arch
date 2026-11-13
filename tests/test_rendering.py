@@ -249,20 +249,98 @@ def test_receipt_separates_a_pack_from_its_pin() -> None:
     ]
 
 
+# One small diagram of every type the bundled Mermaid detects.
+EVERY_TYPE = {
+    "flowchart": "flowchart TB\n a --> b\n b --> c",
+    "sequence": "sequenceDiagram\n Alice->>Bob: hi\n Bob-->>Alice: yo",
+    "class": "classDiagram\n Animal <|-- Duck",
+    "state": "stateDiagram-v2\n [*] --> Idle\n Idle --> Busy\n Busy --> [*]",
+    "er": "erDiagram\n CUSTOMER ||--o{ ORDER : places",
+    "journey": "journey\n title Day\n section Work\n  Code: 5: Me",
+    "gantt": "gantt\n dateFormat YYYY-MM-DD\n todayMarker off\n Task :a1, 2024-01-01, 3d",
+    "pie": 'pie\n "Dogs" : 3\n "Cats" : 1',
+    "quadrant": "quadrantChart\n x-axis Low --> High\n y-axis Low --> High\n A: [0.3, 0.6]",
+    "requirement": (
+        "requirementDiagram\n requirement r1 {\n id: 1\n text: must\n risk: high\n"
+        " verifymethod: test\n }\n element e1 {\n type: sim\n }\n e1 - satisfies -> r1"
+    ),
+    "gitGraph": "gitGraph\n commit\n branch develop\n commit\n checkout main\n merge develop",
+    "c4": 'C4Context\n Person(a, "User")\n System(b, "System")\n Rel(a, b, "Uses")',
+    "mindmap": "mindmap\n root((Root))\n  A\n  B",
+    "timeline": "timeline\n title History\n 2020 : A\n 2021 : B",
+    "sankey": "sankey-beta\nA,B,10\nA,C,5",
+    "xychart": 'xychart-beta\n x-axis [a, b, c]\n y-axis "v" 0 --> 10\n bar [1, 5, 9]',
+    "block": "block-beta\n columns 2\n a b\n a --> b",
+    "packet": 'packet-beta\n 0-15: "Source"\n 16-31: "Destination"',
+    "kanban": "kanban\n todo[Todo]\n  t1[Task]\n done[Done]\n  t2[Other]",
+    "architecture": (
+        "architecture-beta\n group api(cloud)[API]\n service db(database)[Database] in api\n"
+        " service server(server)[Server] in api\n db:L -- R:server"
+    ),
+    "radar": 'radar-beta\n axis a["A"], b["B"], c["C"]\n curve x["X"]{1, 2, 3}',
+    "treemap": 'treemap-beta\n"Root"\n    "A": 10\n    "B": 20',
+    "info": "info",
+    "ishikawa": "ishikawa-beta\n    Late\n    Process\n        Queue\n    People\n        Training",
+    "usecase": 'usecase-beta\nactor User("User")\nLogin("Log in")\nUser --> Login',
+    "eventmodeling": (
+        "eventmodeling\n\ntf 01 ui ShopUI\ntf 02 cmd AddItem\ntf 03 evt ItemAdded\n"
+        "tf 04 rmo CartView ->> 03"
+    ),
+    "venn": 'venn-beta\n set A\n set B\n union A,B["Both"]',
+    "treeView": (
+        'treeView-beta\n    "Drive"\n        "Reports"\n            "Q1.pdf"\n        "Notes"'
+    ),
+    "wardley": (
+        "wardley-beta\ntitle Tea\nanchor Business [0.95, 0.63]\ncomponent Cup [0.73, 0.78]\n"
+        "component Kettle [0.43, 0.35]\nBusiness -> Cup\nCup -> Kettle\nevolve Kettle 0.62"
+    ),
+    "cynefin": (
+        'cynefin-beta\n title Incidents\n complex\n  "Investigate"\n clear\n  "Restart"\n'
+        ' complex --> clear : "Known"'
+    ),
+    "railroad": 'railroad-beta\n digit = choice(terminal("0"), terminal("1")) ;',
+    "railroad-ebnf": 'railroad-ebnf-beta\n number = digit+ ;\n digit = "0" | "1" ;',
+    "railroad-abnf": "railroad-abnf-beta\n label = 1*( ALPHA / DIGIT ) ;",
+    "railroad-peg": 'railroad-peg-beta\n Number <- Digit+ ;\n Digit <- "0" / "1" ;',
+    "swimlane": (
+        "swimlane-beta LR\n subgraph Customer\n  request[Request]\n end\n subgraph Support\n"
+        "  answer[Answer]\n end\n request --> answer"
+    ),
+    "agentflow": (
+        'agentflow-beta TB\n flow reviewer["Review"]\n  changes["Gather"]@{ shape: input }\n'
+        '  analyse["Analyse"]@{ shape: task }\n  changes --> analyse\n end'
+    ),
+}
+
+
 @pytest.mark.browser
-@pytest.mark.parametrize(
-    ("diagram", "other"),
-    [
-        ("sequenceDiagram\n Alice->>Bob: hi", "sequenceDiagram\n Carol->>Dave: yo"),
-        ("classDiagram\n Animal <|-- Duck", "classDiagram\n Shape <|-- Circle"),
-    ],
-)
-def test_diagram_renders_the_same_whatever_rendered_before(
-    browser_session, diagram: str, other: str
+def test_render_is_the_same_whatever_rendered_before(
+    browser_session, icons, tmp_path: Path
 ) -> None:
-    alone = render_mermaid(browser_session, diagram).svg
-    render_mermaid(browser_session, other)
-    assert render_mermaid(browser_session, diagram).svg == alone
+    pinned = {"prefix": "test", "icons": {"account": {"body": '<path d="M1 1h2v2H1z"/>'}}}
+    (tmp_path / "icons" / "test@1.2.3.json").write_text(json.dumps(pinned))
+    graph = "flowchart TB\n a --> b"
+    icon = 'flowchart TB\n a@{ icon: "test:account", label: "A" }'
+    shared = {"theme": "forest", "layout": "elk", "themeCSS": ".node rect { stroke-width: 7px; }"}
+    renders: dict[str, tuple[str, dict]] = {
+        **{name: (source, {}) for name, source in EVERY_TYPE.items()},
+        "dark theme": (graph, {"theme": "dark"}),
+        "plain": (graph, {}),
+        "shared config": (graph, {"config": shared}),
+        "frontmatter": ("---\nconfig:\n  theme: neutral\n  look: handDrawn\n---\n" + graph, {}),
+        "icon": (icon, {}),
+        "same icon from a pinned pack": (icon, {"icon_packs": {"test": "test@1.2.3"}}),
+    }
+
+    def sweep(names) -> dict[str, str]:
+        return {
+            name: render_mermaid(browser_session, renders[name][0], **renders[name][1]).svg
+            for name in names
+        }
+
+    first = sweep(renders)
+    second = sweep(reversed(renders))
+    assert [name for name in renders if first[name] != second[name]] == []
 
 
 @pytest.mark.browser
