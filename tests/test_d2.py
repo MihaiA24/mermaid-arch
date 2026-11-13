@@ -76,6 +76,74 @@ def test_unusable_d2_override_is_reported(tmp_path: Path, monkeypatch: pytest.Mo
     assert [d.code for d in caught.value.diagnostics] == ["env/d2-missing"]
 
 
+def test_working_d2_override_is_reported_as_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("MERMAID_ARCH_D2", raising=False)
+    binary, _ = find_d2()
+    monkeypatch.setenv("MERMAID_ARCH_D2", str(binary))
+
+    assert find_d2() == (binary, "env")
+
+
+_LAYERED = "a -> b\nlayers: {\n  detail: {\n    c -> d\n  }\n}\n"
+
+
+def test_layered_source_without_target_asks_for_one(tmp_path: Path) -> None:
+    source = _write(tmp_path, _LAYERED)
+
+    with pytest.raises(DiagramError) as caught:
+        render_d2(source)
+
+    [diagnostic] = caught.value.diagnostics
+    assert diagnostic.code == "d2/compile"
+    assert "--target" in (diagnostic.hint or "")
+
+
+def test_target_selects_the_root_board_or_a_layer(tmp_path: Path) -> None:
+    source = _write(tmp_path, _LAYERED)
+
+    root = render_d2(source, target="").svg
+    detail = render_d2(source, target="layers.detail").svg
+
+    assert ">a</text>" in root
+    assert ">c</text>" in detail
+    assert root != detail
+
+
+def test_unknown_target_is_a_compile_error_with_a_hint(tmp_path: Path) -> None:
+    source = _write(tmp_path, _LAYERED)
+
+    with pytest.raises(DiagramError) as caught:
+        render_d2(source, target="layers.nope")
+
+    [diagnostic] = caught.value.diagnostics
+    assert diagnostic.code == "d2/compile"
+    assert diagnostic.message == 'render target "layers.nope" not found'
+    assert diagnostic.hint is not None
+
+
+def test_text_renders_without_the_source_file(tmp_path: Path) -> None:
+    source = tmp_path / "absent.d2"
+
+    assert render_d2(source, text="a -> b\n").svg.startswith("<?xml")
+    assert _errors(source, text="a -> b\nx ->\n") == [("d2/compile", 2)]
+
+
+def test_text_resolves_imports_from_the_source_directory(tmp_path: Path) -> None:
+    _write(tmp_path, "imported_shape\n", name="child.d2")
+
+    svg = render_d2(tmp_path / "doc.md", text="x: @child\n").svg
+
+    assert ">imported_shape</text>" in svg
+
+
+def test_sketch_changes_the_rendering(tmp_path: Path) -> None:
+    source = _write(tmp_path, "a -> b\n")
+
+    assert render_d2(source, sketch=True).svg != render_d2(source).svg
+
+
 _THEMED = "vars: {d2-config: {theme-id: 4; dark-theme-id: 201; theme-overrides: {B1: red}}}\na\n"
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from html.parser import HTMLParser
 
 import pytest
@@ -76,3 +77,27 @@ def test_viewer_theme_zoom_and_source_download(browser_session, tmp_path) -> Non
         pending.value.save_as(path)
         assert path.read_text() == source
         assert pending.value.suggested_filename == "shop.mmd"
+
+
+def _offset(page) -> tuple[float, float]:
+    transform = page.locator("#drawing").evaluate("e => e.style.transform")
+    match = re.match(r"translate\(([-\d.]+)px, ([-\d.]+)px\)", transform)
+    assert match is not None, transform
+    return float(match[1]), float(match[2])
+
+
+@pytest.mark.browser
+def test_viewer_arrow_keys_pan_and_resize_keeps_the_view(browser_session) -> None:
+    document = build_html(
+        title="Shop", engine=Engine.MERMAID, source="", light_svg=LIGHT, dark_svg=None
+    )
+    with browser_session.page({"/": document}) as page:
+        x, y = _offset(page)
+        page.keyboard.press("ArrowRight")
+        assert _offset(page) == (x - 50, y)
+        page.keyboard.press("ArrowDown")
+        assert _offset(page) == (x - 50, y - 50)
+        page.evaluate("() => addEventListener('resize', () => { window.resized = true; })")
+        page.set_viewport_size({"width": 900, "height": 600})
+        page.wait_for_function("() => window.resized")
+        assert _offset(page) == (x - 50, y - 50)

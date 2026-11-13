@@ -11,7 +11,7 @@ import pytest
 from mermaid_arch.browser import BrowserSession, svg_to_pdf, svg_to_png
 from mermaid_arch.checks import check_svg, svg_size
 from mermaid_arch.mermaid import render_mermaid
-from mermaid_arch.models import DiagramError, Engine, RenderOptions
+from mermaid_arch.models import DiagramError, Engine, RenderOptions, Source
 from mermaid_arch.pipeline import Result, render_source
 
 
@@ -21,11 +21,16 @@ from mermaid_arch.pipeline import Result, render_source
         ("broken", "svg/malformed"),
         ('<svg viewBox="0 0 20 0"><path d="M0 0"/></svg>', "svg/empty"),
         ('<svg viewBox="0 0 20 20"><defs><path d="M0 0"/></defs></svg>', "svg/empty"),
-        ('<svg viewBox="0 0 10 100"><rect width="10" height="100"/></svg>', "svg/aspect-ratio"),
+        ('<svg viewBox="0 0 500 2500"><rect width="10" height="100"/></svg>', "svg/aspect-ratio"),
     ],
 )
 def test_svg_checks(svg: str, code: str) -> None:
     assert [d.code for d in check_svg(svg)] == [code]
+
+
+@pytest.mark.parametrize("box", ["0 0 50 228", "0 0 1264 148"])
+def test_lopsided_diagram_that_fits_a_screen_is_not_flagged(box: str) -> None:
+    assert check_svg(f'<svg viewBox="{box}"><rect width="10" height="10"/></svg>') == []
 
 
 @pytest.mark.browser
@@ -196,6 +201,17 @@ def test_theme_css_root_addresses_the_svg(browser_session) -> None:
 
 
 @pytest.mark.browser
+def test_svg_id_names_the_root_and_scopes_its_css(browser_session) -> None:
+    source = "---\nconfig:\n  themeCSS: ':root { --paper: 7; }'\n---\nflowchart TB\n a --> b"
+    light = render_mermaid(browser_session, source, svg_id="light").svg
+    dark = render_mermaid(browser_session, source, svg_id="dark").svg
+    assert (ET.fromstring(light).get("id"), ET.fromstring(dark).get("id")) == ("light", "dark")
+    assert "#light{--paper:7;}" in light
+    assert "#dark{--paper:7;}" in dark
+    assert "#light" not in dark
+
+
+@pytest.mark.browser
 def test_named_edge_path_carries_its_class(browser_session) -> None:
     source = "flowchart LR\n a read@--> b\n a --> c\n class read data"
     root = ET.fromstring(render_mermaid(browser_session, source).svg)
@@ -234,17 +250,19 @@ def test_receipt_separates_a_pack_from_its_pin() -> None:
 
 
 @pytest.mark.browser
-def test_reused_page_renders_like_a_fresh_one(browser_session) -> None:
-    plain = "flowchart LR\n x --> y"
-    themed = (
-        "---\nconfig:\n  theme: forest\n  layout: elk\n"
-        "  themeCSS: '.node rect { stroke-width: 9.25px; }'\n---\nflowchart TB\n a --> b"
-    )
-    render_mermaid(browser_session, themed, config={"flowchart": {"nodeSpacing": 120}})
-    reused = render_mermaid(browser_session, plain).svg
-    with pytest.raises(DiagramError):  # a failed render discards its page
-        render_mermaid(browser_session, "flowchart TB\n a --> ]]")
-    assert render_mermaid(browser_session, plain).svg == reused
+@pytest.mark.parametrize(
+    ("diagram", "other"),
+    [
+        ("sequenceDiagram\n Alice->>Bob: hi", "sequenceDiagram\n Carol->>Dave: yo"),
+        ("classDiagram\n Animal <|-- Duck", "classDiagram\n Shape <|-- Circle"),
+    ],
+)
+def test_diagram_renders_the_same_whatever_rendered_before(
+    browser_session, diagram: str, other: str
+) -> None:
+    alone = render_mermaid(browser_session, diagram).svg
+    render_mermaid(browser_session, other)
+    assert render_mermaid(browser_session, diagram).svg == alone
 
 
 @pytest.mark.browser
@@ -267,7 +285,7 @@ def test_pipeline_converts_each_format(
     path = tmp_path / f"diagram{suffix}"
     path.write_text(source)
     targets = {fmt: tmp_path / f"diagram.{fmt}" for fmt in ("svg", "png", "pdf", "html")}
-    result = render_source(path, targets, RenderOptions(), browser_session)
+    result = render_source(Source(path), targets, RenderOptions(), browser_session)
     assert result.ok, result.diagnostics
     assert svg_size(targets["svg"].read_text())[0] > 0
     assert targets["png"].read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
@@ -283,3 +301,59 @@ def test_frontmatter_theme_wins_without_inheriting_cli_palette(browser_session, 
     )
     light = render_mermaid(browser_session, source).svg
     assert render_mermaid(browser_session, source, theme="dark").svg == light
+
+
+@pytest.mark.browser
+def test_text_over_mermaid_limit_is_refused(browser_session) -> None:
+    line = "  Alice->>Bob: " + "payload " * 10 + "\n"
+    under = "sequenceDiagram\n" + line * 520  # 49936 characters
+    assert render_mermaid(browser_session, under).svg
+    with pytest.raises(DiagramError) as caught:
+        render_mermaid(browser_session, under + line)
+    [diagnostic] = caught.value.diagnostics
+    assert diagnostic.code == "mermaid/too-large"
+    assert "50032" in diagnostic.message
+    assert "50000" in diagnostic.message
+
+
+@pytest.mark.browser
+def test_only_a_bundled_theme_renders(browser_session) -> None:
+    graph = "flowchart TB\n a --> b"
+    assert render_mermaid(browser_session, graph, theme="forest").svg
+    for source, theme in [(graph, "nope"), ("---\nconfig:\n  theme: nope\n---\n" + graph, None)]:
+        with pytest.raises(DiagramError) as caught:
+            render_mermaid(browser_session, source, theme=theme)
+        [diagnostic] = caught.value.diagnostics
+        assert (diagnostic.code, diagnostic.severity) == ("mermaid/theme-unknown", "error")
+        assert "'nope'" in diagnostic.message
+        assert "forest" in diagnostic.hint
+
+
+@pytest.mark.browser
+def test_git_graph_renders_the_same_every_time(browser_session) -> None:
+    source = "gitGraph\n commit\n commit\n branch develop\n commit\n checkout main\n merge develop"
+    first = render_mermaid(browser_session, source).svg
+    assert render_mermaid(browser_session, source).svg == first
+
+
+@pytest.mark.browser
+def test_render_past_the_deadline_times_out_and_the_session_recovers(
+    browser_session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = "flowchart TB\n a --> b"
+    monkeypatch.setattr("mermaid_arch.mermaid.MERMAID_TIMEOUT_SECONDS", 0.001)
+    with pytest.raises(DiagramError) as caught:
+        render_mermaid(browser_session, graph)
+    assert [d.code for d in caught.value.diagnostics] == ["mermaid/timeout"]
+    monkeypatch.undo()
+    assert render_mermaid(browser_session, graph).svg
+
+
+@pytest.mark.browser
+def test_fonts_name_what_drew_the_labels(browser_session) -> None:
+    result = render_mermaid(browser_session, "flowchart TB\n a[Start] --> b[Stop]")
+    assert isinstance(result.fonts, tuple)
+    assert result.fonts
+    assert all(isinstance(font, str) and font for font in result.fonts)
+    assert list(result.fonts) == sorted(set(result.fonts))
+    assert "data-mermaid-arch-font" not in result.svg

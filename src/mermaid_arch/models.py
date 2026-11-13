@@ -23,6 +23,8 @@ SOURCE_SUFFIXES: dict[str, Engine] = {
     ".mermaid": Engine.MERMAID,
     ".d2": Engine.D2,
 }
+# A Markdown file is not one diagram: each fenced `mermaid` or `d2` block in it is.
+MARKDOWN_SUFFIXES = (".md", ".markdown")
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,9 +85,24 @@ def engine_for(source: Path) -> Engine:
             error(
                 "source/unknown-type",
                 f"cannot tell the diagram engine from suffix {source.suffix!r}",
-                hint=f"name the source with one of: {known}",
+                hint=f"name the source with one of: {known}, or pass --engine mermaid|d2",
             )
         ) from None
+
+
+@dataclass(frozen=True, slots=True)
+class Source:
+    """One diagram: a file, text piped on stdin (`path` is `-`), or one fenced Markdown block.
+
+    `path` is what diagnostics and receipts name. Diagnostic lines count from `line`, the line
+    of `path` that the diagram text starts on.
+    """
+
+    path: Path
+    engine: Engine | None = None  # None: told by the suffix of `path`
+    text: str | None = None  # None: read from `path`
+    line: int = 1
+    block: int | None = None  # 1-based position among a Markdown file's diagram blocks
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +118,8 @@ class RenderOptions:
     theme: str | None = None  # D2: numeric theme id; Mermaid: theme name
     dark_theme: str | None = None  # D2: SVG dark-mode theme id; both: HTML dark variant
     pad: int | None = None  # D2 only: pixels around the diagram
+    target: str | None = None  # D2 only: the board to render; "" is the root board
+    sketch: bool = False  # D2 only: hand-drawn look; False defers to the source
     scale: float = 2.0  # PNG device pixel ratio
     background: str = "white"  # CSS colour behind PNG, PDF and the HTML light canvas
     mermaid_config: Mapping[str, object] | None = None  # Mermaid only: the shared --config file
@@ -113,9 +132,11 @@ class SvgResult:
     """A rendered diagram: well-formed standalone SVG XML with a viewBox, plus warnings.
 
     `icon_packs` maps each Iconify pack drawn from, as `prefix` or `prefix@version`, to that
-    pack's `lastModified` stamp.
+    pack's `lastModified` stamp. `fonts` names the font families Chromium laid the text out
+    with, which can differ between machines; D2 embeds its own fonts and leaves it empty.
     """
 
     svg: str
     warnings: tuple[Diagnostic, ...] = ()
     icon_packs: Mapping[str, int | None] = field(default_factory=dict)
+    fonts: tuple[str, ...] = ()

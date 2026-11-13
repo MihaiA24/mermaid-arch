@@ -31,8 +31,11 @@ The release wheel needs no git or build step, and pip accepts the same URL.
 `uv add --dev git+https://github.com/MihaiA24/mermaid-arch --tag v0.1.0` builds the same release
 from source. For development, use `uv tool install --editable .`.
 
-D2 is bundled by `d2-python-wrapper`; a `d2` on PATH takes precedence. Mermaid 12.3.0 is bundled
-in this package. A system Chromium/Chrome works; otherwise install the matching Playwright build:
+D2 is bundled by `d2-python-wrapper`, which fixes its release (0.6.8); a `d2` on PATH or in
+`MERMAID_ARCH_D2` takes precedence and is the only route to a newer D2. `doctor` names the
+binary in use and where it came from. Mermaid 12.3.0 is bundled in this package. A system
+Chromium/Chrome works, as does any Chromium already in Playwright's cache; otherwise install
+the matching Playwright build:
 
 ```sh
 mermaid-arch install-browser
@@ -58,6 +61,11 @@ mermaid-arch render docs/architecture.d2 --layout elk --theme 0 --dark-theme 200
 mermaid-arch render docs/*.mmd --config docs/mermaid.json --icon-pack fas=mdi@1.2.3
 mermaid-arch render docs/architecture.d2 -o /tmp/architecture.pdf
 mermaid-arch render docs/overview.d2 docs/pipeline.d2 --out-dir build/diagrams
+mermaid-arch render docs/boards.d2 --target layers.detail --sketch
+mermaid-arch render docs/design.md --out-dir docs/diagrams
+mermaid-arch render - --engine mermaid -o flow.svg < flow.txt
+mermaid-arch render docs/*.mmd -f svg -f png --verify
+mermaid-arch render docs/architecture.mmd -f html --watch
 mermaid-arch check docs/architecture.mmd docs/architecture.d2 --json
 mermaid-arch doctor --json
 mermaid-arch render --help
@@ -70,17 +78,30 @@ are rejected. PNG renders at its natural diagram size with a default 2× scale, 
 PDF is a single page at the diagram's natural size, not A4 pagination. Mermaid SVG is written
 one element per line, so a checked-in file diffs by element.
 
+A Markdown source is rendered block by block: each fenced `mermaid` or `d2` block becomes
+`<stem>-<n>.<format>`, numbered in file order, and its diagnostics carry the Markdown file's
+line numbers. SOURCE `-` reads one diagram from stdin; it needs `--engine` and, for `render`,
+`-o FILE`. `--engine` sets the engine of every source that is not Markdown, whatever its suffix.
+`--watch` renders, then re-renders each listed source when it changes, until Ctrl-C; it does not
+follow D2 imports or the `--config` file.
+
 | Source | Layout | Outputs |
 | --- | --- | --- |
 | `.mmd`, `.mermaid` | Bundled Mermaid: dagre, or ELK with `config.layout: elk`; native sequence, state, ER and other Mermaid types | SVG, PNG, PDF, HTML |
 | `.d2` | D2 dagre or ELK | SVG (including configured dark theme), PNG, PDF, HTML |
+| `.md`, `.markdown` | Each fenced `mermaid` or `d2` block, by its own engine | One set per block, named `<stem>-<n>` |
 
 The **source owns configuration**. With no flags, D2 honors `vars.d2-config`, then its own
 defaults. Explicit D2 flags override source values. Mermaid frontmatter `config` overrides
 `--theme`; a pinned theme yields a single-variant HTML page. Unpinned Mermaid sources get light
 and dark variants. PNG/PDF use light media; for a dark D2 export specify both theme IDs and a
 dark `--background`. The bundled Mermaid lays out with dagre or ELK (`config.layout: elk`); a
-layout name it does not register falls back to dagre with a warning.
+layout name it does not register falls back to dagre with a warning. A theme name it does not
+register is an error, not a silent default palette.
+
+A D2 source with `layers`, `scenarios` or `steps` holds several boards and renders one at a
+time: `--target ''` is the root board, `--target layers.NAME` one layer. `--sketch` gives D2
+its hand-drawn look; a Mermaid source declares `look: handDrawn` in its frontmatter instead.
 
 Several Mermaid sources share one look through `--config FILE`: a Mermaid config in JSON, as
 for `mmdc -c`, that holds the theme, spacing and `themeCSS` once. It counts as frontmatter
@@ -98,10 +119,12 @@ brands.
 ### Checked delivery
 
 Compilation, Iconify-name validation and SVG structure checks precede delivery. A frontmatter
-`themeCSS` that Mermaid discards is reported. Parse errors include source line numbers;
-diagnostics have stable codes and repair hints. Extreme aspect ratios produce warnings. These
-are not overlap detection or architectural correctness checks: inspect the PNG before calling a
-diagram visually reviewed.
+`themeCSS` that Mermaid discards is reported. So is a source over Mermaid's text limit, which
+Mermaid alone would draw as a one-box placeholder, and a render that has not finished after
+180 s is stopped. Parse errors include source line numbers; diagnostics have stable codes and
+repair hints. A diagram more than 4× longer than it is wide, or the reverse, produces a warning
+once its long side passes 1,600 px. These are not overlap detection or architectural
+correctness checks: inspect the PNG before calling a diagram visually reviewed.
 
 All conversions for a source finish before any output is written. A compile, check or conversion
 failure leaves its previous outputs untouched; other sources in the batch still run. Output
@@ -109,8 +132,19 @@ files are staged beside their destinations and each replacement is atomic. Sever
 not a filesystem transaction: an I/O failure during replacement can leave a partially updated
 set. Exit codes: `0` success (warnings allowed), `1` rendering failure, `2` invalid invocation.
 
-`--json` emits one object on stdout, including output sizes, SHA-256 values and the icon packs
-drawn from. An error example:
+On one machine a source renders to the same bytes every time: Mermaid's random ids are seeded
+and PDFs carry no timestamps. `render --verify` relies on that: it renders in memory, writes
+nothing, and fails with `output/stale` or `output/missing` when a target file is not what its
+source renders now, which lets CI prove that committed diagrams are current. Across machines,
+Mermaid text is laid out with the fonts installed there, so `--verify` holds where the fonts,
+Chromium and icon packs match those of the machine that rendered; the receipt and `doctor`
+name the fonts. A Mermaid SVG takes its root id from its output name (`mermaid-arch-<stem>`, or
+`mermaid-arch-<stem>-<n>` for a Markdown block), so several can be inlined in one page without
+their styles colliding.
+
+`--json` emits one object on stdout, including output sizes, SHA-256 values, the fonts Mermaid
+text was laid out with and the icon packs drawn from; the result of a Markdown block also has
+its `block` number. An error example:
 
 ```json
 {
@@ -128,7 +162,8 @@ drawn from. An error example:
       "line": 3,
       "hint": "end the connection with a target shape (`a -> b`) or delete the dangling arrow"
     }],
-    "icon_packs": []
+    "icon_packs": [],
+    "fonts": []
   }]
 }
 ```
@@ -136,11 +171,12 @@ drawn from. An error example:
 ### HTML viewer
 
 One portable file embeds the SVG variants and original source. It offers system/default or
-`?theme=dark|light` themes, drag-to-pan, cursor-centered wheel zoom, touch pinch, fit and actual
-size, SVG/PNG/source downloads, keyboard shortcuts and Print → PDF. A single-theme diagram
-keeps its original paper color when the surrounding viewer goes dark. Browser PNG export can
-be restricted by SVG HTML labels or canvas limits; the page shows the CLI export command when
-that happens. CLI PNG rendering handles HTML labels directly in Chromium.
+`?theme=dark|light` themes, drag or arrow-key panning, cursor-centered wheel zoom, touch pinch,
+fit and actual size, SVG/PNG/source downloads, keyboard shortcuts and Print → PDF. A
+single-theme diagram keeps its original paper color when the surrounding viewer goes dark.
+Browser PNG export can be restricted by SVG HTML labels or canvas limits; the page shows the
+CLI export command when that happens. CLI PNG rendering handles HTML labels directly in
+Chromium.
 
 ## Install the skill
 
@@ -192,12 +228,13 @@ uv run ruff check .
 uv run ruff format --check .
 ```
 
-Browser tests skip when no Chromium can launch. They use a small seeded icon pack and need no
-network. To update Mermaid: download the chosen npm release's `dist/mermaid.min.js` into
-`src/mermaid_arch/assets/mermaid.min.js`, update `MERMAID_VERSION` and `BUNDLED_LAYOUTS` in
-`mermaid.py`, and replace the version, checksum and license in `THIRD_PARTY_NOTICES.md`.
-Re-render the examples and check both themes; SVG markup and parser behavior can change between
-releases.
+Browser tests skip when no Chromium can launch; with `MERMAID_ARCH_REQUIRE_BROWSER=1`, as in
+CI, they fail instead. CI runs the suite on Linux and macOS with Python 3.12 and 3.14. The
+tests use a small seeded icon pack and need no network. To update Mermaid: download the chosen
+npm release's `dist/mermaid.min.js` into `src/mermaid_arch/assets/mermaid.min.js`, update
+`MERMAID_VERSION`, `BUNDLED_LAYOUTS` and `BUNDLED_THEMES` in `mermaid.py`, and replace the
+version, checksum and license in `THIRD_PARTY_NOTICES.md`. Re-render the examples and check
+both themes; SVG markup and parser behavior can change between releases.
 
 To release, set `version` in `pyproject.toml`, commit, then tag and push `vX.Y.Z`. CI runs the
 checks above, confirms the tag names the project version, builds, and publishes a GitHub release

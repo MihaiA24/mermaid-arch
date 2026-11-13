@@ -8,6 +8,9 @@ import xml.etree.ElementTree as ET
 from mermaid_arch.models import Diagnostic, error, warning
 
 MAX_ASPECT_RATIO = 4.0
+# A lopsided diagram is only hard to read once its long side outgrows a screen: a two-node
+# chain or a Gantt chart at Mermaid's 1,264 px page width reads fine at full size.
+MIN_FLAGGED_SIDE = 1600.0
 
 _DRAWABLE = frozenset(
     {
@@ -69,7 +72,7 @@ def check_svg(svg: str) -> list[Diagnostic]:
             )
         ]
     ratio = max(width, height) / min(width, height)
-    if ratio > MAX_ASPECT_RATIO:
+    if ratio > MAX_ASPECT_RATIO and max(width, height) > MIN_FLAGGED_SIDE:
         shape = "taller than wide" if height > width else "wider than tall"
         return [
             warning(

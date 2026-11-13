@@ -1,11 +1,13 @@
 # Mermaid authoring
 
-- **Repository source.** Use `.mmd` or `.mermaid`; export the SVG for Markdown hosts that do not
-  support the exact Mermaid version or icon syntax. The tool bundles Mermaid 12.3.0.
+- **Repository source.** Use `.mmd` or `.mermaid`, or a fenced `mermaid` block in the Markdown
+  file it illustrates; export the SVG for Markdown hosts that do not support the exact Mermaid
+  version or icon syntax. The tool bundles Mermaid 12.3.0.
 - **Source configuration.** Put spacing, theme and `themeCSS` in YAML frontmatter `config`.
   A source that pins `theme` overrides the CLI theme and produces a single-variant HTML viewer;
   its paper remains light while viewer chrome can switch themes. Leave the theme unpinned for
-  separate light and dark variants.
+  separate light and dark variants. A theme name outside the bundled set fails as
+  `mermaid/theme-unknown`; its hint lists the set.
 - **Shared look.** Several diagrams with one look keep theme, spacing and role CSS in one
   Mermaid config JSON passed as `--config FILE`; each source then carries only `class id role`.
   Frontmatter overrides the file per key, and a `theme` in the file pins the theme as
@@ -65,10 +67,15 @@
   `.arrowMarkerPath { fill: context-stroke; stroke: none; }` for matching arrowheads.
 - **Fonts.** Keep the default font unless a specific font has been verified in the actual
   renderer. Some Mermaid theme paths discard hyphenated font-family values; label measurement
-  can then disagree with the intended font.
+  can then disagree with the intended font. Text is laid out with the fonts installed on the
+  rendering machine: the receipt's `fonts` names them, which explains a layout that differs
+  between machines.
 - **Exports.** PNG uses the SVG's natural viewBox dimensions at the requested scale, not an
   arbitrary 800-pixel browser viewport. PDF is one page at the diagram's size. HTML embeds the
   compiled SVG, so the recipient needs neither Mermaid nor network access. SVG is written one
-  element per line, so a checked-in file diffs by element.
+  element per line, so a checked-in file diffs by element; its root id is
+  `mermaid-arch-<output stem>`, so several inline into one page.
 - **Evidence and scope.** Name source files in `%% Evidence:` comments. Split long request paths
   into sequence diagrams or drill-downs instead of shrinking an entire system into one screen.
+  Mermaid stops at 50,000 characters of diagram text (`mermaid/too-large`); only `maxTextSize`
+  in the `--config` file raises that.

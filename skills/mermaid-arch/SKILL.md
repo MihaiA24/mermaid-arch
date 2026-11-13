@@ -35,8 +35,10 @@ as a uv tool; commands run from the project working directory.
    mermaid-arch render docs/architecture.mmd -f svg -f png --json
    ```
 
-   A render/check/conversion failure writes no outputs for that source, preserving the last
-   good files. Batch sources are independent. Done when the receipt reports `ok: true`.
+   A Markdown file is a source too: each fenced `mermaid` or `d2` block in it renders to
+   `<stem>-<n>.<format>`. A render/check/conversion failure writes no outputs for that source,
+   preserving the last good files. Batch sources are independent. Done when the receipt
+   reports `ok: true`.
 5. **Repair.** Apply each diagnostic's `hint`, preserving the source meaning, and rerun the
    complete render command. Done when every error is resolved and each warning is fixed or
    explicitly justified.
@@ -46,7 +48,9 @@ as a uv tool; commands run from the project working directory.
    Done when the reader can follow the requested story without deciphering the layout.
 7. **Deliver.** Link the requested outputs and name the editable source. Mention deliberate
    omissions or unresolved warnings; distinguish automated checks from visual inspection.
-   Done when the user can open the artifact and regenerate it from the source.
+   For committed outputs, rerun the render command with `--verify`: it writes nothing and
+   fails when a file is not what its source renders now. Done when the user can open the
+   artifact and regenerate it from the source.
 
 ## Setup branch
 

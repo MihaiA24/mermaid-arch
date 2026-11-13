@@ -64,13 +64,13 @@ dl { display:grid; grid-template-columns:90px 1fr; gap:8px; } dd { margin:0; }
     <button id="help" aria-label="Keyboard shortcuts">?</button>
   </nav>
 </header>
-<main id="viewport" aria-label="Diagram. Drag to pan; use the wheel to zoom.">
+<main id="viewport" aria-label="Diagram. Drag or use the arrow keys to pan; use the wheel to zoom.">
   <div id="drawing"></div>
 </main>
 <div id="message" role="status" hidden><button id="dismiss" aria-label="Dismiss message">×</button><span></span></div>
 <dialog id="shortcuts">
   <h2>Diagram shortcuts</h2>
-  <dl><dt>+ / −</dt><dd>Zoom in / out</dd><dt>0 / 1</dt><dd>Fit / actual size</dd><dt>T</dt><dd>Toggle theme</dd><dt>E</dt><dd>Export menu</dd><dt>?</dt><dd>These shortcuts</dd></dl>
+  <dl><dt>+ / −</dt><dd>Zoom in / out</dd><dt>0 / 1</dt><dd>Fit / actual size</dd><dt>← ↑ → ↓</dt><dd>Pan</dd><dt>T</dt><dd>Toggle theme</dd><dt>E</dt><dd>Export menu</dd><dt>?</dt><dd>These shortcuts</dd></dl>
   <p>Drag to pan. Wheel or pinch to zoom.</p>
   <form method="dialog"><button>Close</button></form>
 </dialog>
@@ -103,6 +103,8 @@ const query = new URLSearchParams(location.search).get('theme');
 let theme = ['light','dark'].includes(query) ? query : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 let width = 1, height = 1, x = 0, y = 0, z = 1, touched = false;
 const pointers = new Map();
+// An arrow reveals more of the diagram on its side, so the drawing moves the other way.
+const arrowPan = {arrowleft:[1,0], arrowright:[-1,0], arrowup:[0,1], arrowdown:[0,-1]};
 function update() {
   drawing.style.transform = `translate(${x}px, ${y}px) scale(${z})`;
   zoomLabel.value = `${Math.round(z * 100)}%`;
@@ -222,7 +224,8 @@ for (const button of document.querySelectorAll('[data-export]')) button.onclick 
 document.addEventListener('keydown', event => {
   if (event.ctrlKey || event.metaKey || event.altKey || /INPUT|TEXTAREA|SELECT/.test(event.target.tagName) || document.getElementById('shortcuts').open) return;
   const key = event.key.toLowerCase();
-  if (['+','=','-','0','1','t','e','?'].includes(key)) event.preventDefault();
+  const pan = Object.hasOwn(arrowPan, key) && arrowPan[key];
+  if (pan || ['+','=','-','0','1','t','e','?'].includes(key)) event.preventDefault();
   if (key === '+' || key === '=') zoomBy(1.25);
   else if (key === '-') zoomBy(0.8);
   else if (key === '0') fit();
@@ -230,6 +233,7 @@ document.addEventListener('keydown', event => {
   else if (key === 't') toggleTheme();
   else if (key === 'e') toggleMenu();
   else if (key === '?') document.getElementById('shortcuts').showModal();
+  else if (pan) { x += pan[0] * 50; y += pan[1] * 50; touched = true; update(); }
   else if (key === 'escape') { menu.hidden = true; message.hidden = true; }
 });
 window.addEventListener('resize', () => { if (!touched) fit(); });

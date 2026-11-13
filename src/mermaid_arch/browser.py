@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 import shutil
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager, suppress
@@ -27,10 +28,6 @@ from mermaid_arch.models import DiagramError, error
 
 INTERNAL_ORIGIN = "https://mermaid-arch.invalid"
 MAX_PNG_SIDE = 16384
-# Each kept page holds its scripts in memory; a batch rarely mixes more sets of files.
-_KEPT_PAGES = 4
-
-_Files = frozenset[tuple[str, bytes | str | Path]]
 
 _PATH_BROWSERS = (
     "chromium",
@@ -45,6 +42,8 @@ _MACOS_BROWSERS = (
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
 )
+# Playwright installs each Chromium build into a `chromium-<revision>` directory of its cache.
+_REVISION = re.compile(r"chromium-\d+")
 _LAUNCH_TIMEOUT_MS = 30_000
 _HTML = "text/html; charset=utf-8"
 _CONTENT_TYPES = {
@@ -58,6 +57,9 @@ _INSTALL_HINT = (
     "run `mermaid-arch install-browser`, or set MERMAID_ARCH_CHROMIUM to a Chromium/Chrome "
     "executable"
 )
+
+# Skia stamps the Info dictionary with the time of printing; nothing else varies between runs.
+_PDF_TIMESTAMP = re.compile(rb"/(?:CreationDate|ModDate) \(D:[^)]*\)")
 
 # Replaces the page body with the SVG parsed as XML, at exactly its viewBox size: Mermaid roots
 # carry width="100%" and a max-width style that would otherwise shrink or stretch them.
@@ -83,15 +85,14 @@ class BrowserSession:
         self._browser: Browser | None = None
         self._executable = ""
         self._origin = ""
-        self._kept: dict[_Files, tuple[BrowserContext, Page]] = {}
 
     def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc: object) -> None:
-        self._kept.clear()  # the contexts close with the browser
         if self._browser is not None:
-            self._browser.close()
+            with suppress(PlaywrightError):
+                self._browser.close()
             self._browser = None
         if self._playwright is not None:
             self._playwright.stop()
@@ -114,31 +115,9 @@ class BrowserSession:
         try:
             yield page
         finally:
-            context.close()
-
-    def kept_page(self, files: Mapping[str, bytes | str | Path]) -> Page:
-        """A page like `page()`'s, kept open and returned again to every call with equal `files`.
-
-        Scripts the page loaded stay loaded, which is the point; so does any state they hold,
-        and the caller must reset it. Equal files, not overlapping ones, share a page: what an
-        earlier use fetched is then exactly what a fresh page could fetch.
-        """
-        key = frozenset(files.items())
-        if key not in self._kept:
-            if len(self._kept) >= _KEPT_PAGES:
-                self._close(next(iter(self._kept)))
-            self._kept[key] = self._open(dict(files), 1.0, "light")
-        return self._kept[key][1]
-
-    def forget_page(self, files: Mapping[str, bytes | str | Path]) -> None:
-        """Close the page kept for `files`; the next `kept_page(files)` opens a fresh one."""
-        self._close(frozenset(files.items()))
-
-    def _close(self, key: _Files) -> None:
-        kept = self._kept.pop(key, None)
-        if kept is not None:
+            # A browser that died has taken the context along; raising here would mask why.
             with suppress(PlaywrightError):
-                kept[0].close()
+                context.close()
 
     def _open(
         self,
@@ -155,18 +134,21 @@ class BrowserSession:
             page = context.new_page()
             page.goto(INTERNAL_ORIGIN + "/")
         except BaseException:
-            context.close()
+            with suppress(PlaywrightError):
+                context.close()
             raise
         return context, page
 
     def _launched(self) -> Browser:
-        if self._browser is not None:
+        if self._browser is not None and self._browser.is_connected():
             return self._browser
-        playwright = sync_playwright().start()
+        self._browser = None
+        playwright = self._playwright or sync_playwright().start()
         try:
             self._browser, self._executable, self._origin = _launch(playwright.chromium)
         except BaseException:
-            playwright.stop()
+            if self._playwright is None:
+                playwright.stop()
             raise
         self._playwright = playwright
         return self._browser
@@ -204,13 +186,15 @@ def svg_to_pdf(session: BrowserSession, svg: str, *, background: str = "white") 
     width, height = _svg_size(svg)
     with session.page({"/": _canvas(background)}) as page:
         page.evaluate(_MOUNT_SVG, {"svg": svg, "width": width, "height": height})
-        return page.pdf(
+        pdf = page.pdf(
             width=f"{width}px",
             height=f"{height}px",
             margin={"top": "0", "right": "0", "bottom": "0", "left": "0"},
             print_background=True,
             page_ranges="1",
         )
+    # Blank the timestamps byte for byte so every xref offset stays valid.
+    return _PDF_TIMESTAMP.sub(lambda stamp: b" " * len(stamp[0]), pdf, count=2)
 
 
 def _launch(chromium: BrowserType) -> tuple[Browser, str, str]:
@@ -247,8 +231,24 @@ def _launch(chromium: BrowserType) -> tuple[Browser, str, str]:
 
 
 def _candidates(chromium: BrowserType) -> Iterator[tuple[str, str]]:
-    if Path(chromium.executable_path).is_file():
+    expected = Path(chromium.executable_path)
+    if expected.is_file():
         yield chromium.executable_path, "playwright"
+    # Another Playwright version may have installed a different revision that runs just as well.
+    # ponytail: tries only the expected revision's relative executable path, so a revision laid
+    # out differently is missed; read each revision's own layout if that ever happens.
+    revision = next((path for path in expected.parents if _REVISION.fullmatch(path.name)), None)
+    if revision is not None:
+        relative = expected.relative_to(revision)
+        others = [
+            other
+            for other in revision.parent.glob("chromium-*")
+            if _REVISION.fullmatch(other.name) and other != revision
+        ]
+        others.sort(key=lambda other: int(other.name.removeprefix("chromium-")), reverse=True)
+        for other in others:
+            if (other / relative).is_file():
+                yield str(other / relative), "playwright"
     for name in _PATH_BROWSERS:
         if found := shutil.which(name):
             yield found, "system"

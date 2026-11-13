@@ -17,11 +17,13 @@ DEFAULT_DARK_THEME = "200"
 D2_TIMEOUT_SECONDS = 180
 
 # d2 reads these as flag defaults, which would silently override the source's d2-config.
-_OVERRIDING_ENV = ("D2_LAYOUT", "D2_THEME", "D2_DARK_THEME", "D2_PAD")
+_OVERRIDING_ENV = ("D2_LAYOUT", "D2_THEME", "D2_DARK_THEME", "D2_PAD", "D2_SKETCH")
 
 _THEME_ID = re.compile(r"-?\d+")
 _LOCATION = re.compile(r"(?P<path>.+?):(?P<line>\d+):(?P<column>\d+): (?P<message>.*)")
-_COMPILE_PREFIX = re.compile(r"failed to compile .+?: (?=.+?:\d+:\d+: |bad usage: )")
+_COMPILE_PREFIX = re.compile(
+    r"failed to compile .+?: (?=.+?:\d+:\d+: |bad usage: |multiboard output |render target )"
+)
 _D2_CONFIG = re.compile(r"d2-config\s*:\s*\{(?P<body>[^{}]*(?:\{[^{}]*\}[^{}]*)*)\}")
 _CONFIG_THEME = re.compile(r"(?<![\w-])theme-id\s*:\s*(?P<id>-?\d+)")
 _CONFIG_DARK_THEME = re.compile(r"(?<![\w-])dark-theme-id\s*:\s*(?P<id>-?\d+)")
@@ -39,11 +41,25 @@ _HINTS = (
         re.compile(r"failed to import"),
         "fix the import path; it resolves relative to the importing file",
     ),
+    (
+        re.compile(r"multiboard output cannot be written to stdout"),
+        "the source declares several boards (layers, scenarios or steps); choose one with "
+        "--target: `--target ''` for the root board, `--target layers.NAME`, "
+        "`scenarios.NAME` or `steps.NAME` for one board",
+    ),
+    (
+        re.compile(r"render target .* not found"),
+        "name a board the source declares: `''` for the root board, or `layers.NAME`, "
+        "`scenarios.NAME` or `steps.NAME`",
+    ),
 )
 
 
-def find_d2() -> Path:
-    """`$MERMAID_ARCH_D2`, else `d2` on PATH, else the binary bundled with d2-python-wrapper."""
+def find_d2() -> tuple[Path, str]:
+    """The d2 binary and its origin: "env", "path" or "bundled".
+
+    `$MERMAID_ARCH_D2`, else `d2` on PATH, else the binary bundled with d2-python-wrapper.
+    """
     configured = os.environ.get("MERMAID_ARCH_D2")
     if configured:
         found = shutil.which(configured)
@@ -55,12 +71,13 @@ def find_d2() -> Path:
                     hint="point MERMAID_ARCH_D2 at a d2 binary, or unset it to use the bundled one",
                 )
             )
-        return Path(found)
+        # Absolute, because text input runs d2 in the source's directory.
+        return Path(found).absolute(), "env"
     on_path = shutil.which("d2")
     if on_path is not None:
-        return Path(on_path)
+        return Path(on_path).absolute(), "path"
     try:
-        return Path(D2().binary_path)
+        return Path(D2().binary_path), "bundled"
     except RuntimeError as exc:
         raise DiagramError(
             error(
@@ -72,7 +89,7 @@ def find_d2() -> Path:
 
 
 def d2_version() -> str:
-    binary = find_d2()
+    binary, _ = find_d2()
     try:
         completed = subprocess.run(
             [str(binary), "--version"],
@@ -102,22 +119,33 @@ def d2_version() -> str:
 def render_d2(
     source: Path,
     *,
+    text: str | None = None,
     layout: str | None = None,
     theme: str | None = None,
     dark_theme: str | None = None,
     pad: int | None = None,
+    target: str | None = None,
+    sketch: bool = False,
 ) -> SvgResult:
-    """Render `source` to SVG; only non-`None` arguments become flags, so d2-config applies."""
-    args = _flags(layout=layout, theme=theme, dark_theme=dark_theme, pad=pad)
-    binary = find_d2()
+    """Render `source` to SVG; only set arguments become flags, so d2-config applies otherwise.
+
+    With `text`, d2 compiles `text` instead of the file, resolving imports from
+    `source.parent`. `target` names the board of a multi-board source; `""` is the root board.
+    """
+    args = _flags(
+        layout=layout, theme=theme, dark_theme=dark_theme, pad=pad, target=target, sketch=sketch
+    )
+    binary, _ = find_d2()
     env = {key: value for key, value in os.environ.items() if key not in _OVERRIDING_ENV}
     try:
         completed = subprocess.run(
-            [str(binary), *args, str(source), "-"],
+            [str(binary), *args, str(source) if text is None else "-", "-"],
             capture_output=True,
             text=True,
             encoding="utf-8",
-            stdin=subprocess.DEVNULL,
+            input=text,
+            stdin=subprocess.DEVNULL if text is None else None,
+            cwd=None if text is None else source.parent,
             env=env,
             timeout=D2_TIMEOUT_SECONDS,
             check=False,
@@ -140,7 +168,7 @@ def render_d2(
             )
         ) from None
     if completed.returncode != 0:
-        raise DiagramError(*_errors(completed.stderr, source))
+        raise DiagramError(*_errors(completed.stderr, source if text is None else None))
     if not completed.stdout.strip():
         raise DiagramError(
             error(
@@ -172,7 +200,13 @@ def d2_viewer_themes(source_text: str, options: RenderOptions) -> tuple[str, str
 
 
 def _flags(
-    *, layout: str | None, theme: str | None, dark_theme: str | None, pad: int | None
+    *,
+    layout: str | None,
+    theme: str | None,
+    dark_theme: str | None,
+    pad: int | None,
+    target: str | None,
+    sketch: bool,
 ) -> list[str]:
     problems: list[Diagnostic] = []
     args: list[str] = [] if layout is None else ["--layout", layout]
@@ -191,13 +225,20 @@ def _flags(
             )
     if pad is not None:
         args += ["--pad", str(pad)]
+    if target is not None:
+        args += ["--target", target]
+    if sketch:
+        args.append("--sketch")
     if problems:
         raise DiagramError(*problems)
     return args
 
 
-def _errors(stderr: str, source: Path) -> list[Diagnostic]:
-    """One diagnostic per `err:` location line; a usage failure becomes one `d2/usage`."""
+def _errors(stderr: str, source: Path | None) -> list[Diagnostic]:
+    """One diagnostic per `err:` location line; a usage failure becomes one `d2/usage`.
+
+    `source` is `None` when d2 read the source from stdin, where it calls it `-`.
+    """
     lines = [
         line.removeprefix("err:").strip() for line in stderr.splitlines() if line.startswith("err:")
     ]
@@ -209,7 +250,7 @@ def _errors(stderr: str, source: Path) -> list[Diagnostic]:
     if lines[0].startswith("bad usage: "):
         return [error("d2/usage", " ".join(lines).removeprefix("bad usage: "))]
 
-    source_path = source.resolve()
+    source_path = None if source is None else source.resolve()
     diagnostics: list[Diagnostic] = []
     for text in lines:
         location = _LOCATION.fullmatch(text)
@@ -217,7 +258,11 @@ def _errors(stderr: str, source: Path) -> list[Diagnostic]:
             diagnostics.append(error("d2/compile", text, hint=_hint(text)))
             continue
         message = location["message"]
-        if Path(location["path"]).resolve() == source_path:
+        if (
+            location["path"] == "-"
+            if source_path is None
+            else Path(location["path"]).resolve() == source_path
+        ):
             diagnostics.append(
                 error(
                     "d2/compile",

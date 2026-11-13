@@ -14,12 +14,16 @@ from pathlib import Path
 from typing import Any
 
 from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import Page
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from mermaid_arch import __version__
 from mermaid_arch.browser import BrowserSession
 from mermaid_arch.models import Diagnostic, DiagramError, SvgResult, error, warning
 
 MERMAID_VERSION = "12.3.0"
+# A layout can spin Chromium's main thread for good; the deadline stops a batch hanging on it.
+MERMAID_TIMEOUT_SECONDS = 180
 # Layouts the bundled build registers; Mermaid lays any other name out with dagre.
 BUNDLED_LAYOUTS = (
     "dagre",
@@ -32,6 +36,22 @@ BUNDLED_LAYOUTS = (
     "elk.rectpacking",
     "swimlane",
     "cose-bilkent",
+)
+# Themes the bundled build registers, plus `null`, which Mermaid documents as "no theme".
+# Mermaid renders any other name with the default palette.
+BUNDLED_THEMES = (
+    "default",
+    "base",
+    "dark",
+    "forest",
+    "neutral",
+    "neo",
+    "neo-dark",
+    "redux",
+    "redux-color",
+    "redux-dark",
+    "redux-dark-color",
+    "null",
 )
 # Mermaid draws `fas:fa-name` in label text from a pack registered as `fas`. These Iconify
 # packs stand behind Font Awesome's style prefixes; `fa` is an Iconify pack in its own right.
@@ -50,69 +70,105 @@ _THEME_CSS = re.compile(r"""(?:^|[\s{,"'])themeCSS["']?\s*:""", re.M)
 _ELEMENT_BREAK = re.compile(r"(<(foreignObject|text)\b.*?</\2(?=>))|>(?=<)", re.S)
 _HTML = """<!doctype html><html><head><meta charset="utf-8"></head>
 <body><div id="container"></div><script src="/mermaid.js"></script></body></html>"""
-_RENDER = """async ({source, theme, site, packs}) => {
-  // The page is reused: drop the previous diagram, whose styles apply to the whole document.
-  document.getElementById('container').replaceChildren();
-  // The shared --config file overrides the defaults above it, never the settings below it.
-  const config = {
-    handDrawnSeed: 1, layout: 'dagre', ...site,
-    startOnLoad: false, securityLevel: 'strict', suppressErrorRendering: true,
-    deterministicIds: true, deterministicIDSeed: 'mermaid-arch'
-  };
-  if (theme !== null && site.theme === undefined) config.theme = theme;
-  mermaid.initialize(config);
-  mermaid.registerIconPacks(packs.map(name => ({
-    name, loader: () => fetch('/icons/' + name + '.json').then(r => r.json())
-  })));
-  try {
-    await mermaid.parse(source);
-    const effective = mermaid.mermaidAPI.getConfig();
-    const layout = effective.layout;
-    // Frontmatter can replace the requested theme, but initialize() has already expanded
-    // that theme's palette. Reinitialize from the effective theme to avoid mixed palettes.
-    if (effective.theme !== (config.theme || 'default')) {
-      config.theme = effective.theme;
+_FONT_TAG = "data-mermaid-arch-font"
+_RENDER = """args => {
+  // Start the render after this call returns, so that Python can wait for it with a deadline
+  // that holds even while a layout never yields the main thread.
+  setTimeout(async () => { window.mermaidArchResult = await render(args); }, 0);
+
+  async function render({source, id, theme, themes, site, packs, fontTag}) {
+    try {
+      // gitGraph commit ids and some layouts draw on Math.random: seed it for repeatable output.
+      let seed = 1;
+      Math.random = () => {
+        seed = (seed + 0x6d2b79f5) | 0;
+        let t = Math.imul(seed ^ (seed >>> 15), seed | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+      // The shared --config file overrides the defaults above it, never the settings below it.
+      const config = {
+        handDrawnSeed: 1, layout: 'dagre', ...site,
+        startOnLoad: false, securityLevel: 'strict', suppressErrorRendering: true,
+        deterministicIds: true, deterministicIDSeed: 'mermaid-arch'
+      };
+      if (theme !== null && site.theme === undefined) config.theme = theme;
+      // initialize() swaps an unknown theme for the default, so check the name asked for;
+      // a theme from frontmatter or a directive reaches the config unchecked.
+      const requested = config.theme ?? 'default';
       mermaid.initialize(config);
-    }
-    const {svg} = await mermaid.render('mermaid-arch', source);
-    const container = document.getElementById('container');
-    container.innerHTML = svg;
-    const root = container.querySelector(':scope > svg');
-    if (!root || root.querySelector('.error-icon, .error-text')) {
-      return {ok: false, message: 'Mermaid returned an error graphic'};
-    }
-    // Iconify randomizes gradient/clip IDs independently of Mermaid's deterministic seed.
-    // Canonicalize only those IDs and their references, preserving the authored geometry.
-    const ids = new Map([...root.querySelectorAll('[id^="IconifyId"]')]
-      .map((element, index) => [element.id, `iconify-${index}`]));
-    const canonical = value => value.replace(/IconifyId[0-9a-zA-Z_-]+/g, id => ids.get(id) || id);
-    for (const element of root.querySelectorAll('*')) {
-      for (const attribute of [...element.attributes]) {
-        const value = canonical(attribute.value);
-        if (value !== attribute.value) attribute.value = value;
+      mermaid.registerIconPacks(packs.map(name => ({
+        name, loader: () => fetch('/icons/' + name + '.json').then(r => r.json())
+      })));
+      const parsed = await mermaid.parse(source);
+      const named = parsed.config?.theme ?? requested;
+      if (!themes.includes(named)) return {ok: false, theme: String(named)};
+      const effective = mermaid.mermaidAPI.getConfig();
+      const layout = effective.layout;
+      // Frontmatter can replace the requested theme, but initialize() has already expanded
+      // that theme's palette. Reinitialize from the effective theme to avoid mixed palettes.
+      if (effective.theme !== (config.theme || 'default')) {
+        config.theme = effective.theme;
+        mermaid.initialize(config);
       }
-      // Mermaid nests themeCSS under the root's id, which leaves `:root` matching nothing.
-      // Point it at the root, so a theme can paint the canvas and declare variables there.
-      if (element.localName === 'style') {
-        element.textContent = canonical(element.textContent)
-          .replaceAll('#mermaid-arch :root', '#mermaid-arch');
+      const {svg} = await mermaid.render(id, source);
+      const container = document.getElementById('container');
+      container.innerHTML = svg;
+      const root = container.querySelector(':scope > svg');
+      if (!root || root.querySelector('.error-icon, .error-text')) {
+        return {ok: false, message: 'Mermaid returned an error graphic'};
       }
+      // Over maxTextSize, render() draws a placeholder where parse() raised nothing. Mermaid
+      // measures the source without frontmatter, directives and comments, which only shortens
+      // it: a source within the limit is never swapped, whatever its labels say.
+      const limit = effective.maxTextSize ?? 50000;
+      const labels = [...root.querySelectorAll('.node')].map(node => node.textContent);
+      if (source.length > limit && labels.join() === 'Maximum text size in diagram exceeded') {
+        return {ok: false, limit};
+      }
+      // Iconify randomizes gradient/clip IDs independently of Mermaid's deterministic seed.
+      // Canonicalize only those IDs and their references, preserving the authored geometry.
+      const ids = new Map([...root.querySelectorAll('[id^="IconifyId"]')]
+        .map((element, index) => [element.id, `iconify-${index}`]));
+      const canonical = value => value.replace(/IconifyId[0-9a-zA-Z_-]+/g, k => ids.get(k) || k);
+      for (const element of root.querySelectorAll('*')) {
+        for (const attribute of [...element.attributes]) {
+          const value = canonical(attribute.value);
+          if (value !== attribute.value) attribute.value = value;
+        }
+        // Mermaid nests themeCSS under the root's id, which leaves `:root` matching nothing.
+        // Point it at the root, so a theme can paint the canvas and declare variables there.
+        if (element.localName === 'style') {
+          element.textContent = canonical(element.textContent)
+            .replaceAll(`#${id} :root`, `#${id}`);
+        }
+      }
+      // Mermaid applies a classDef to a named edge but leaves the class name off its path;
+      // with the name there, shared CSS can colour edges by role.
+      const diagram = await mermaid.mermaidAPI.getDiagramFromText(source);
+      for (const edge of diagram.db.getEdges?.() ?? []) {
+        if (!edge.id || !edge.classes?.length) continue;
+        const path = root.querySelector(`path[data-edge="true"][data-id="${CSS.escape(edge.id)}"]`);
+        if (path) path.classList.add(...edge.classes);
+      }
+      await document.fonts.ready;
+      const serialized = new XMLSerializer().serializeToString(root);
+      // Mark one text element per font stack, after serializing: Python asks Chromium which
+      // installed fonts drew each one.
+      const stacks = new Set();
+      for (const element of root.querySelectorAll('text, text *, foreignObject *')) {
+        const family = getComputedStyle(element).fontFamily;
+        const text = [...element.childNodes]
+          .some(node => node.nodeType === Node.TEXT_NODE && node.data.trim());
+        if (text && !stacks.has(family)) {
+          stacks.add(family);
+          element.setAttribute(fontTag, '');
+        }
+      }
+      return {ok: true, svg: serialized, layout, themeCSS: effective.themeCSS ?? null};
+    } catch (e) {
+      return {ok: false, message: String(e.message || e), line: e.hash?.loc?.first_line};
     }
-    // Mermaid applies a classDef to a named edge but leaves the class name off its path;
-    // with the name there, shared CSS can colour edges by role.
-    const diagram = await mermaid.mermaidAPI.getDiagramFromText(source);
-    for (const edge of diagram.db.getEdges?.() ?? []) {
-      if (!edge.id || !edge.classes?.length) continue;
-      const path = root.querySelector(`path[data-edge="true"][data-id="${CSS.escape(edge.id)}"]`);
-      if (path) path.classList.add(...edge.classes);
-    }
-    await document.fonts.ready;
-    return {
-      ok: true, svg: new XMLSerializer().serializeToString(root), layout,
-      themeCSS: effective.themeCSS ?? null
-    };
-  } catch (e) {
-    return {ok: false, message: String(e.message || e), line: e.hash?.loc?.first_line};
   }
 }"""
 
@@ -131,11 +187,14 @@ def render_mermaid(
     theme: str | None = None,
     config: Mapping[str, object] | None = None,
     icon_packs: Mapping[str, str] | None = None,
+    svg_id: str = "mermaid-arch",
 ) -> SvgResult:
     """Render `source`; `config` is shared Mermaid config that frontmatter overrides per key.
 
     `icon_packs` maps a pack name used in the source to the Iconify pack that serves it,
-    written `prefix` or, pinned to a release, `prefix@version`.
+    written `prefix` or, pinned to a release, `prefix@version`. `svg_id`, matching
+    `[a-z][a-z0-9-]*`, is the SVG root's id, which scopes its CSS: SVGs that share a page
+    need distinct ones.
     """
     served = {**FONT_AWESOME_PACKS, **(icon_packs or {})}
     references: dict[str, list[tuple[str, str, int]]] = {}
@@ -183,23 +242,56 @@ def render_mermaid(
     if problems:
         raise DiagramError(*problems)
 
-    # One page per set of icon packs loads the 5 MB bundle once for a whole batch. Mermaid's
-    # config is rebuilt by every render; a page that failed is not trusted with another.
+    # A fresh page per render: Mermaid keeps id counters in module state that page code cannot
+    # reset, so on a reused page a diagram's ids would depend on what rendered before it.
     try:
-        result = session.kept_page(routes).evaluate(
-            _RENDER,
-            {
-                "source": source,
-                "theme": theme,
-                "site": dict(config or {}),
-                "packs": list(references),
-            },
-        )
+        with session.page(routes) as page:
+            page.evaluate(
+                _RENDER,
+                {
+                    "source": source,
+                    "id": svg_id,
+                    "theme": theme,
+                    "themes": list(BUNDLED_THEMES),
+                    "site": dict(config or {}),
+                    "packs": list(references),
+                    "fontTag": _FONT_TAG,
+                },
+            )
+            result = page.wait_for_function(
+                "() => window.mermaidArchResult", timeout=MERMAID_TIMEOUT_SECONDS * 1000
+            ).json_value()
+            fonts = _fonts(page) if result["ok"] else ()
+    except PlaywrightTimeoutError:
+        raise DiagramError(
+            error(
+                "mermaid/timeout",
+                f"Mermaid did not finish within {MERMAID_TIMEOUT_SECONDS} s",
+                hint="split the diagram into an overview plus drill-down diagrams, "
+                "or try another config.layout",
+            )
+        ) from None
     except PlaywrightError as exc:
-        session.forget_page(routes)
         raise DiagramError(error("mermaid/render", str(exc))) from None
+    if "theme" in result:
+        raise DiagramError(
+            error(
+                "mermaid/theme-unknown",
+                f"theme {result['theme']!r} is not in the bundled Mermaid {MERMAID_VERSION}",
+                hint="set the theme to one of: " + ", ".join(BUNDLED_THEMES),
+            )
+        )
+    if "limit" in result:
+        raise DiagramError(
+            error(
+                "mermaid/too-large",
+                f"the source has {len(source)} characters; without frontmatter, directives and "
+                f"comments it is still over Mermaid's maxTextSize of {result['limit']}",
+                hint="split it into an overview plus drill-down diagrams, or raise maxTextSize "
+                "in the --config file (Mermaid ignores it in frontmatter)",
+            )
+        )
     if not result["ok"]:
-        session.forget_page(routes)
         message = result["message"]
         parsed = re.search(r"Parse error on line (\d+)", message)
         line = result.get("line")
@@ -238,7 +330,28 @@ def render_mermaid(
             )
         )
     svg = _ELEMENT_BREAK.sub(lambda m: m[1] or ">\n", result["svg"])
-    return SvgResult(svg, tuple(diagnostics), modified)
+    return SvgResult(svg, tuple(diagnostics), modified, fonts)
+
+
+def _fonts(page: Page) -> tuple[str, ...]:
+    """Installed font families Chromium drew the tagged text of the mounted diagram with."""
+    cdp = page.context.new_cdp_session(page)
+    try:
+        cdp.send("DOM.enable")
+        cdp.send("CSS.enable")
+        root = cdp.send("DOM.getDocument")["root"]["nodeId"]
+        nodes = cdp.send("DOM.querySelectorAll", {"nodeId": root, "selector": f"[{_FONT_TAG}]"})
+        return tuple(
+            sorted(
+                {
+                    font["familyName"]
+                    for node in nodes["nodeIds"]
+                    for font in cdp.send("CSS.getPlatformFontsForNode", {"nodeId": node})["fonts"]
+                }
+            )
+        )
+    finally:
+        cdp.detach()
 
 
 def _icon_pack(spec: str) -> tuple[Path, dict[str, Any]]:

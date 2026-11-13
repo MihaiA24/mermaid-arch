@@ -14,7 +14,7 @@ from playwright.sync_api import Error as PlaywrightError
 from mermaid_arch import __version__
 from mermaid_arch.browser import BrowserSession
 from mermaid_arch.d2 import d2_version, find_d2
-from mermaid_arch.mermaid import MERMAID_VERSION, icon_cache_dir
+from mermaid_arch.mermaid import MERMAID_VERSION, icon_cache_dir, render_mermaid
 from mermaid_arch.models import DiagramError
 
 
@@ -36,12 +36,12 @@ REQUIRED = ("d2", "mermaid", "chromium")
 
 
 def run_doctor() -> tuple[tuple[Check, ...], bool]:
-    """All checks plus overall ok, which needs d2, Mermaid and Chromium."""
+    """All checks plus overall ok, which needs d2, Mermaid and Chromium; fonts only inform."""
     checks = (
         Check("mermaid-arch", "ok", __version__),
         _d2(),
         _mermaid(),
-        _chromium(),
+        *_browser(),
         _icon_cache(),
     )
     ok = all(check.status == "ok" for check in checks if check.name in REQUIRED)
@@ -50,11 +50,17 @@ def run_doctor() -> tuple[tuple[Check, ...], bool]:
 
 def _d2() -> Check:
     try:
-        binary = find_d2()
+        binary, origin = find_d2()
         version = d2_version()
     except DiagramError as exc:
         return _missing("d2", exc)
-    return Check("d2", "ok", f"{version} at {binary}")
+    hint = None
+    if origin == "bundled":
+        hint = (
+            "this is the D2 release shipped inside d2-python-wrapper; a newer D2 is used only "
+            "when `d2` is on PATH or MERMAID_ARCH_D2 points at one"
+        )
+    return Check("d2", "ok", f"{version} at {binary} ({origin})", hint)
 
 
 def _mermaid() -> Check:
@@ -69,21 +75,43 @@ def _mermaid() -> Check:
     return Check("mermaid", "ok", f"{MERMAID_VERSION} (bundled)")
 
 
-def _chromium() -> Check:
-    try:
-        with BrowserSession() as session:
+def _browser() -> tuple[Check, Check]:
+    """The chromium and fonts checks, from one Chromium launch."""
+    with BrowserSession() as session:
+        try:
             info = session.describe()
-    except DiagramError as exc:
-        return _missing("chromium", exc)
-    except PlaywrightError as exc:
-        return Check(
-            "chromium",
-            "missing",
-            f"Chromium failed to start: {exc.message}",
-            hint="run `mermaid-arch install-browser`, or set MERMAID_ARCH_CHROMIUM to a working "
-            "Chromium or Chrome executable",
+        except DiagramError as exc:
+            return _missing("chromium", exc), _unknown_fonts("Chromium did not launch")
+        except PlaywrightError as exc:
+            chromium = Check(
+                "chromium",
+                "missing",
+                f"Chromium failed to start: {exc.message}",
+                hint="run `mermaid-arch install-browser`, or set MERMAID_ARCH_CHROMIUM to a "
+                "working Chromium or Chrome executable",
+            )
+            return chromium, _unknown_fonts("Chromium did not launch")
+        chromium = Check(
+            "chromium", "ok", f"{info['version']} at {info['executable']} ({info['origin']})"
         )
-    return Check("chromium", "ok", f"{info['version']} at {info['executable']} ({info['origin']})")
+        try:
+            fonts = render_mermaid(session, 'flowchart LR\n a["Aa"]').fonts
+        except DiagramError as exc:
+            return chromium, _unknown_fonts(exc.diagnostics[0].message)
+        except PlaywrightError as exc:
+            return chromium, _unknown_fonts(exc.message.strip().partition("\n")[0])
+    if not fonts:
+        return chromium, _unknown_fonts("Chromium reported no font for the sample text")
+    detail = (
+        f"{', '.join(fonts)}: Mermaid text is laid out with this machine's fonts; the receipt's "
+        '"fonts" names them per render'
+    )
+    return chromium, Check("fonts", "ok", detail)
+
+
+def _unknown_fonts(reason: str) -> Check:
+    detail = f"the fonts Mermaid lays text out with could not be determined: {reason}"
+    return Check("fonts", "missing", detail)
 
 
 def _icon_cache() -> Check:
