@@ -28,8 +28,10 @@ as a uv tool; commands run from the project working directory.
    Keep an overview and drill-downs separate. Done when the source covers the requested scope.
 4. **Render.** Run the gate below. Add `-f html` for a shareable pan/zoom viewer or `-f pdf`
    for print. Source config owns the styling: explicit D2 flags override `vars.d2-config`;
-   Mermaid frontmatter wins over `--theme` and over a shared `--config` file. Reuse the flags
-   in the source's `%% Render:` comment. Consult `mermaid-arch render --help` for options.
+   Mermaid frontmatter wins over `--theme` and over a shared `--config` file, which wins over
+   `--preset archify`, a built-in look that colours nodes by role class; a
+   `%% legend: app Service | data Store` line draws the key. Reuse the flags in the source's
+   `%% Render:` comment. Consult `mermaid-arch render --help` for options and directives.
 
    ```sh
    mermaid-arch render docs/architecture.mmd -f svg -f png --json

@@ -1,0 +1,24 @@
+{
+  "theme": "base",
+  "look": "classic",
+  "fontFamily": "\"JetBrains Mono\", ui-monospace, SFMono-Regular, Menlo, Consolas, \"DejaVu Sans Mono\", monospace",
+  "fontSize": 14,
+  "themeVariables": {
+    "fontFamily": "\"JetBrains Mono\", ui-monospace, SFMono-Regular, Menlo, Consolas, \"DejaVu Sans Mono\", monospace",
+    "fontSize": "14px"
+  },
+  "flowchart": {
+    "nodeSpacing": 64,
+    "rankSpacing": 80,
+    "padding": 20,
+    "wrappingWidth": 260,
+    "diagramPadding": 28,
+    "titleTopMargin": 28,
+    "subGraphTitleMargin": {"top": 12, "bottom": 20}
+  },
+  "sequence": {
+    "mirrorActors": false,
+    "actorFontWeight": 700,
+    "diagramMarginY": 24
+  }
+}

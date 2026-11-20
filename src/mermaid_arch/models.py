@@ -123,8 +123,11 @@ class RenderOptions:
     scale: float = 2.0  # PNG device pixel ratio
     background: str = "white"  # CSS colour behind PNG, PDF and the HTML light canvas
     mermaid_config: Mapping[str, object] | None = None  # Mermaid only: the shared --config file
+    preset: str | None = None  # Mermaid only: built-in config that --config overrides
     # Mermaid only: pack name written in a source -> Iconify `prefix` or `prefix@version`
     icon_packs: Mapping[str, str] = field(default_factory=dict)
+    monochrome_icons: bool = False  # Mermaid only: label icons in the text colour
+    font_files: tuple[Path, ...] = ()  # Mermaid only: fonts to lay out with and embed
 
 
 @dataclass(frozen=True, slots=True)

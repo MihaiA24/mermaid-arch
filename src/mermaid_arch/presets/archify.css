@@ -1,0 +1,113 @@
+/* Archify look: --preset archify. Colour encodes a role, a dashed border a status.
+   Roles: actor app sec data ext danger; statuses: new later planned.
+   Give a node a role with `class ID ROLE`, a named edge with `class EDGE_ID ROLE`. */
+
+/* Typography is measured before layout: change sizes here, not after rendering. */
+.label-icon { height: 1.4em; width: auto; margin-right: .4em; vertical-align: -.4em; }
+.node .nodeLabel p { text-align: left; text-wrap: pretty; white-space-collapse: collapse; }
+.cluster-label p { font-size: 12px; font-weight: 700; }
+.edgeLabel p { font-size: 12px; }
+.flowchartTitleText { font-size: 20px; font-weight: 700; }
+
+:root {
+  --bg: #f8fafc; --dot: #e2e8f0; --text: #0f172a; --muted: #475569;
+  --lane-fill: #fff; --lane-stroke: #cbd5e1; --arrow: #64748b; --main: #2563eb;
+  --blue: #2563eb; --blue-fill: #eff6ff;
+  --teal: #0f766e; --teal-fill: #f0fdfa;
+  --violet: #6d28d9; --violet-fill: #f5f3ff;
+  --amber: #b45309; --amber-fill: #fffbeb;
+  --rose: #be123c; --rose-fill: #fff1f2;
+  --slate: #64748b; --slate-fill: #f1f5f9;
+  --shadow: rgba(15, 23, 42, .08);
+  --stroke: var(--slate); --fill: #fff; --dash: none;
+  background: var(--bg) radial-gradient(var(--dot) .7px, transparent 1px) 0 0 / 24px 24px !important;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f172a; --dot: #1e293b; --text: #f1f5f9; --muted: #cbd5e1;
+    --lane-fill: #111c2e; --lane-stroke: #334155; --arrow: #94a3b8; --main: #93c5fd;
+    --blue: #93c5fd; --blue-fill: #1c2d46;
+    --teal: #5eead4; --teal-fill: #153631;
+    --violet: #c4b5fd; --violet-fill: #302644;
+    --amber: #fcd34d; --amber-fill: #3c2d1b;
+    --rose: #fda4af; --rose-fill: #44212b;
+    --slate: #94a3b8; --slate-fill: #1e293b;
+    --shadow: rgba(0, 0, 0, .2);
+    --fill: #1e293b;
+  }
+  /* Dark brand logos need a light chip; single-colour icons use currentColor. */
+  .label-icon:not(:has([fill="currentColor"])) {
+    background: #e2e8f0; border-radius: 3px; box-shadow: 0 0 0 2px #e2e8f0;
+  }
+}
+.actor { --stroke: var(--slate); --fill: var(--slate-fill); }
+.app { --stroke: var(--blue); --fill: var(--blue-fill); }
+.sec { --stroke: var(--teal); --fill: var(--teal-fill); }
+.data { --stroke: var(--violet); --fill: var(--violet-fill); }
+.ext { --stroke: var(--slate); --fill: var(--slate-fill); }
+.danger { --stroke: var(--rose); --fill: var(--rose-fill); }
+.new { --stroke: var(--amber); --fill: var(--amber-fill); --dash: 6 4; }
+.later { --stroke: var(--amber); --fill: var(--lane-fill); --dash: 2 4; }
+.planned { --stroke: var(--slate); --fill: transparent; --dash: 4 4; --text: var(--muted); }
+/* Every node outline, rect or not: some shapes draw it as a group of fill and stroke paths. */
+.node > :is(rect, .label-container), .node > g.label-container > :is(path, circle) {
+  fill: var(--fill) !important; stroke: var(--stroke) !important; stroke-width: 1.5px !important;
+  stroke-dasharray: var(--dash) !important;
+}
+.node > rect { rx: 8px; ry: 8px; }
+.node > :is(rect, .label-container) { filter: drop-shadow(0 2px 3px var(--shadow)); }
+.node .nodeLabel p { color: var(--muted) !important; }
+.node .nodeLabel b { color: var(--text); }
+.node .label-icon { color: var(--stroke); }
+.node .label-icon:not(:has([fill="currentColor"])) { color: #000; }
+.cluster > rect {
+  fill: var(--lane-fill) !important; stroke: var(--lane-stroke) !important;
+  stroke-width: 1.2px !important; stroke-dasharray: var(--dash); rx: 12px; ry: 12px;
+}
+.cluster:not([class="cluster"]) > rect { stroke: var(--stroke) !important; stroke-opacity: .5; }
+.cluster-label p { color: var(--muted) !important; }
+.cluster:not([class="cluster"]) .cluster-label p { color: var(--stroke) !important; }
+.flowchart-link { stroke: var(--arrow) !important; stroke-width: 1.5px !important; }
+.flowchart-link.edge-thickness-thick { stroke: var(--main) !important; stroke-width: 2.5px !important; }
+.flowchart-link.edge-pattern-dotted { stroke-dasharray: 4 4 !important; }
+.flowchart-link:is(.app, .sec, .data, .ext, .danger, .new, .later, .planned) {
+  stroke: var(--stroke) !important;
+}
+marker path { fill: var(--arrow) !important; fill: context-stroke !important; stroke: none !important; }
+.edgeLabel p { color: var(--muted) !important; }
+.edgeLabel .labelBkg, .edgeLabel p { background: var(--bg) !important; }
+.flowchartTitleText { fill: var(--text) !important; }
+.legend rect {
+  fill: var(--fill); stroke: var(--stroke); stroke-width: 1.5px; stroke-dasharray: var(--dash);
+}
+.legend .new { --dash: 3 2; }
+.legend .later { --dash: 1.5 2; }
+.legend .planned { --dash: 2 2; }
+.legend text { fill: var(--muted); font-size: 11px; }
+
+/* Sequence diagrams: participants carry the look; lifelines, messages and notes stay neutral.
+   A canvas-coloured halo lets lifelines pass behind message text instead of striking it. */
+rect.actor, .actor-man :is(line, circle) {
+  fill: var(--fill) !important; stroke: var(--stroke) !important; stroke-width: 1.5px !important;
+  stroke-dasharray: var(--dash) !important;
+}
+rect.actor { rx: 8px; ry: 8px; filter: drop-shadow(0 2px 3px var(--shadow)); }
+text.actor, text.actor > tspan { fill: var(--text) !important; stroke: none !important; }
+.actor-line { stroke: var(--lane-stroke) !important; stroke-width: 1px !important; }
+:is(.messageLine0, .messageLine1) { stroke: var(--arrow) !important; stroke-width: 1.5px !important; }
+:is([id$="-crosshead"], [id*="stick"]) path { fill: none !important; stroke: var(--arrow) !important; }
+:is(.messageText, .noteText, .labelText, .loopText, .sectionTitle),
+:is(.messageText, .noteText, .labelText, .loopText, .sectionTitle) > tspan {
+  fill: var(--muted) !important; stroke: none !important;
+}
+text.messageText, text.messageText > tspan {
+  paint-order: stroke; stroke: var(--bg) !important; stroke-width: 6px; stroke-linejoin: round;
+}
+text.messageText { transform: translateY(-3px); }
+rect.note { fill: var(--lane-fill) !important; stroke: var(--lane-stroke) !important; rx: 6px; ry: 6px; }
+rect[class^="activation"] { fill: var(--slate-fill) !important; stroke: var(--slate) !important; }
+.loopLine { stroke: var(--arrow) !important; stroke-width: 1.2px !important; }
+.labelBox { fill: var(--slate-fill) !important; stroke: var(--lane-stroke) !important; }
+[id$="-sequencenumber"] { fill: var(--arrow) !important; }
+.sequenceNumber { fill: var(--bg) !important; }
+:root > text:not([class]) { fill: var(--text) !important; font-size: 20px; font-weight: 700; }

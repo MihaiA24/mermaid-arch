@@ -92,3 +92,10 @@ def test_pdf_bytes_do_not_depend_on_the_time(browser_session) -> None:
     second = svg_to_pdf(browser_session, SVG)
     assert first.startswith(b"%PDF-")
     assert first == second
+
+
+@pytest.mark.browser
+def test_pdf_bytes_do_not_depend_on_a_png_rendered_before(browser_session) -> None:
+    first = svg_to_pdf(browser_session, SVG)
+    svg_to_png(browser_session, SVG, scale=3.0, background="red")
+    assert svg_to_pdf(browser_session, SVG) == first

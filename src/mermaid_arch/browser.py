@@ -68,6 +68,19 @@ _MOUNT_SVG = """async ({svg, width, height}) => {
   await document.fonts.ready;
 }"""
 
+# Playwright's default viewport, restored before printing so a PDF never depends on the PNG
+# rasterised before it.
+_VIEWPORT = {"width": 1280, "height": 720}
+_CANVAS = (
+    '<!doctype html><html><head><meta charset="utf-8"><style>'
+    "html, body { margin: 0; padding: 0; overflow: hidden; }"
+    "</style></head><body></body></html>"
+)
+# An invalid colour leaves a style property as it was, so clear it first.
+_SET_BACKGROUND = (
+    "bg => { const s = document.documentElement.style; s.background = ''; s.background = bg; }"
+)
+
 
 class BrowserSession:
     """Lazily launched headless Chromium shared by Mermaid rendering and rasterisation."""
@@ -79,12 +92,13 @@ class BrowserSession:
         self._origin = ""
         self._kept: tuple[str, Page] | None = None
         self._kept_files: Mapping[str, bytes | str | Path] = {}
+        self._canvas: Page | None = None
 
     def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc: object) -> None:
-        self._kept = None
+        self._kept = self._canvas = None
         if self._browser is not None:
             with suppress(PlaywrightError):
                 self._browser.close()
@@ -141,6 +155,29 @@ class BrowserSession:
         if kept is not None:
             with suppress(PlaywrightError):
                 kept[1].context.close()
+
+    @contextmanager
+    def canvas(self, background: str) -> Iterator[Page]:
+        """A blank page with `background` behind it, in a tab kept from call to call.
+
+        Callers replace the body and set the viewport they need. A call that raises closes
+        the tab, and the next call opens another.
+        """
+        page = self._canvas
+        if page is None or page.is_closed():
+            self._canvas = None
+            page = self._open(lambda route: _serve(route, {"/": _CANVAS}))
+            self._canvas = page
+        try:
+            if page.url != INTERNAL_ORIGIN + "/":
+                page.goto(INTERNAL_ORIGIN + "/")
+            page.evaluate(_SET_BACKGROUND, background)
+            yield page
+        except BaseException:
+            self._canvas = None
+            with suppress(PlaywrightError):
+                page.context.close()
+            raise
 
     def _open(
         self,
@@ -203,7 +240,7 @@ def svg_to_png(
         )
     # Rasterise at final pixel dimensions. Playwright rounds fractional CSS clips before
     # applying the device ratio, which can lose the final row of a Mermaid diagram.
-    with session.page({"/": _canvas(background)}) as page:
+    with session.canvas(background) as page:
         page.set_viewport_size({"width": pixel_width, "height": pixel_height})
         page.evaluate(_MOUNT_SVG, {"svg": svg, "width": width * scale, "height": height * scale})
         return page.screenshot(
@@ -215,7 +252,8 @@ def svg_to_png(
 
 def svg_to_pdf(session: BrowserSession, svg: str, *, background: str = "white") -> bytes:
     width, height = _svg_size(svg)
-    with session.page({"/": _canvas(background)}) as page:
+    with session.canvas(background) as page:
+        page.set_viewport_size(_VIEWPORT)
         page.evaluate(_MOUNT_SVG, {"svg": svg, "width": width, "height": height})
         pdf = page.pdf(
             width=f"{width}px",
@@ -307,14 +345,6 @@ def _serve(route: Route, files: Mapping[str, bytes | str | Path]) -> None:
         route.fulfill(path=body, content_type=content_type)
     else:
         route.fulfill(body=body, content_type=content_type)
-
-
-def _canvas(background: str) -> str:
-    return (
-        '<!doctype html><html><head><meta charset="utf-8"><style>'
-        f"html, body {{ margin: 0; padding: 0; overflow: hidden; background: {background}; }}"
-        "</style></head><body></body></html>"
-    )
 
 
 def _svg_size(svg: str) -> tuple[float, float]:

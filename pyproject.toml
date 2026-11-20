@@ -8,6 +8,7 @@ license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.12"
 dependencies = [
     "d2-python-wrapper>=0.2.0",
+    "fonttools[woff]>=4.50",
     "playwright>=1.49",
 ]
 
