@@ -7,10 +7,12 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
+from fontTools.fontBuilder import FontBuilder
+from fontTools.pens.ttGlyphPen import TTGlyphPen
 
 from mermaid_arch.browser import BrowserSession, svg_to_pdf, svg_to_png
 from mermaid_arch.checks import check_svg, svg_size
-from mermaid_arch.mermaid import render_mermaid
+from mermaid_arch.mermaid import merge_config, render_mermaid
 from mermaid_arch.models import DiagramError, Engine, RenderOptions, Source
 from mermaid_arch.pipeline import Result, render_source
 
@@ -84,7 +86,7 @@ def icons(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                         )
                     }
                 },
-                "aliases": {"person": {"parent": "account"}},
+                "aliases": {"person": {"parent": "account"}, "member": {"parent": "person"}},
             }
         )
     )
@@ -94,6 +96,7 @@ def icons(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ("source", "suggestion"),
     [
         ('flowchart TB\n a@{ icon: "test:acount" }', "test:account"),
+        ("flowchart TB\n a@{ icon: test:acount }", "test:account"),
         ("architecture-beta\n service db(test:acount)[Database]", "test:account"),
         ('flowchart TB\n a["fas:fa-acount Customer"]', "fas:fa-account"),
     ],
@@ -109,11 +112,18 @@ def test_unknown_icon_is_rejected_with_line_and_suggestion(
 
 
 @pytest.mark.browser
-def test_label_icon_draws_from_the_pack_served_under_its_name(browser_session, icons) -> None:
-    source = 'flowchart TB\n a["fas:fa-person Customer"]'
-    assert (
-        "M2 2h20v20H2z" in render_mermaid(browser_session, source, icon_packs={"fas": "test"}).svg
-    )
+def test_label_icon_keeps_its_colours_unless_monochrome(browser_session, icons) -> None:
+    source = 'flowchart TB\n a["fas:fa-member Customer"]'  # member -> person -> account
+
+    def icon_path(**options) -> ET.Element:
+        svg = render_mermaid(browser_session, source, icon_packs={"fas": "test"}, **options).svg
+        [icon] = [e for e in ET.fromstring(svg).iter() if e.get("class") == "label-icon"]
+        return next(e for e in icon.iter() if e.get("d"))
+
+    coloured = icon_path()
+    assert coloured.get("d") == "M2 2h20v20H2z"
+    assert "url(" in coloured.get("style", "")
+    assert "style" not in icon_path(monochrome_icons=True).attrib
 
 
 @pytest.mark.browser
@@ -182,6 +192,10 @@ def test_shared_config_sits_under_frontmatter_and_pins_the_theme(browser_session
     assert "stroke-width:9.25px" in overridden.svg
     assert "stroke-width:7.25px" not in overridden.svg
     assert not overridden.warnings
+    on_preset = render_mermaid(browser_session, own, config=config, preset="archify")
+    assert "stroke-width:9.25px" in on_preset.svg
+    assert "--blue-fill" in on_preset.svg
+    assert "stroke-width:7.25px" not in on_preset.svg
 
 
 @pytest.mark.browser
@@ -221,6 +235,83 @@ def test_named_edge_path_carries_its_class(browser_session) -> None:
         if path.get("data-edge")
     }
     assert [edge for edge, names in classes.items() if "data" in names] == ["read"]
+
+
+@pytest.mark.browser
+def test_legend_draws_a_key_and_names_a_role_no_element_has(browser_session) -> None:
+    graph = "flowchart LR\n a --> b\n class a app"
+    legend = "flowchart LR\n %% legend: app Service | data Store\n" + graph.split("\n", 1)[1]
+    plain = ET.fromstring(render_mermaid(browser_session, graph).svg)
+    result = render_mermaid(browser_session, legend)
+    keyed = ET.fromstring(result.svg)
+    [key] = [e for e in keyed.iter() if e.get("class") == "legend"]
+    assert "".join(key.itertext()).split() == ["Service", "Store"]
+    height = float(plain.get("viewBox").split()[3])
+    assert float(keyed.get("viewBox").split()[3]) > height
+    [diagnostic] = result.warnings
+    assert (diagnostic.code, diagnostic.line) == ("mermaid/legend-role-unused", 2)
+    assert "'data'" in diagnostic.message
+
+
+def test_malformed_legend_entry_is_rejected_with_its_line() -> None:
+    source = "flowchart LR\n %% legend: app Service | Store\n a --> b"
+    with BrowserSession() as session, pytest.raises(DiagramError) as caught:
+        render_mermaid(session, source)
+    [diagnostic] = caught.value.diagnostics
+    assert (diagnostic.code, diagnostic.line) == ("mermaid/legend", 2)
+
+
+def test_config_merges_over_a_preset_key_by_key() -> None:
+    preset = {"flowchart": {"padding": 20, "nodeSpacing": 64}, "themeCSS": ".a {}"}
+    config = {"flowchart": {"padding": 8}, "themeCSS": ".b {}", "theme": "dark"}
+    assert merge_config(preset, config) == {
+        "flowchart": {"padding": 8, "nodeSpacing": 64},
+        "themeCSS": ".a {}\n.b {}",
+        "theme": "dark",
+    }
+
+
+def _font(path: Path) -> Path:
+    """A TrueType font, family TestFace, with a wide square for every letter a to z."""
+    letters = [chr(code) for code in range(ord("a"), ord("z") + 1)]
+    names = [".notdef", *letters]
+    builder = FontBuilder(1000, isTTF=True)
+    builder.setupGlyphOrder(names)
+    builder.setupCharacterMap({ord(letter): letter for letter in letters})
+    glyphs = {}
+    for name in names:
+        pen = TTGlyphPen(None)
+        pen.moveTo((0, 0))
+        pen.lineTo((0, 700))
+        pen.lineTo((900, 700))
+        pen.lineTo((900, 0))
+        pen.closePath()
+        glyphs[name] = pen.glyph()
+    builder.setupGlyf(glyphs)
+    builder.setupHorizontalMetrics({name: (1000, 0) for name in names})
+    builder.setupHorizontalHeader(ascent=800, descent=-200)
+    builder.setupNameTable({"familyName": "TestFace", "styleName": "Regular"})
+    builder.setupOS2()
+    builder.setupPost()
+    builder.save(path)
+    return path
+
+
+@pytest.mark.browser
+def test_font_lays_text_out_and_travels_inside_the_svg(browser_session, tmp_path: Path) -> None:
+    font = _font(tmp_path / "test.ttf")
+    graph = "flowchart LR\n a[abcdefghijklmnopqrstuvwxyz] --> b[label]"  # wider than the minimum
+    config = {"fontFamily": '"TestFace"', "themeVariables": {"fontFamily": '"TestFace"'}}
+    first = render_mermaid(browser_session, graph, config=config, font_files=[font])
+    assert '@font-face{font-family:"TestFace"' in first.svg
+    assert "data:font/woff2;base64," in first.svg
+    assert not first.warnings
+    assert render_mermaid(browser_session, graph, config=config, font_files=[font]) == first
+    fallback = render_mermaid(browser_session, graph, config=config)
+    assert ET.fromstring(first.svg).get("viewBox") != ET.fromstring(fallback.svg).get("viewBox")
+    unnamed = render_mermaid(browser_session, graph, font_files=[font])
+    assert [warning.code for warning in unnamed.warnings] == ["mermaid/font-unused"]
+    assert "@font-face" not in unnamed.svg
 
 
 @pytest.mark.browser
@@ -322,6 +413,7 @@ def test_render_is_the_same_whatever_rendered_before(
     graph = "flowchart TB\n a --> b"
     icon = 'flowchart TB\n a@{ icon: "test:account", label: "A" }'
     shared = {"theme": "forest", "layout": "elk", "themeCSS": ".node rect { stroke-width: 7px; }"}
+    face = {"fontFamily": '"TestFace"', "themeVariables": {"fontFamily": '"TestFace"'}}
     renders: dict[str, tuple[str, dict]] = {
         **{name: (source, {}) for name, source in EVERY_TYPE.items()},
         "dark theme": (graph, {"theme": "dark"}),
@@ -330,6 +422,9 @@ def test_render_is_the_same_whatever_rendered_before(
         "frontmatter": ("---\nconfig:\n  theme: neutral\n  look: handDrawn\n---\n" + graph, {}),
         "icon": (icon, {}),
         "same icon from a pinned pack": (icon, {"icon_packs": {"test": "test@1.2.3"}}),
+        "preset": (graph, {"preset": "archify"}),
+        "legend": ("flowchart TB\n %% legend: app Service\n a --> b\n class a app", {}),
+        "font": (graph, {"font_files": [_font(tmp_path / "test.ttf")], "config": face}),
     }
 
     def sweep(names) -> dict[str, str]:

@@ -238,7 +238,13 @@ def _ignored_options(
     engine: Engine, options: RenderOptions, targets: Mapping[OutputFormat, Path]
 ) -> list[Diagnostic]:
     if engine is Engine.D2:
-        given = {"--config": options.mermaid_config is not None, "--icon-pack": options.icon_packs}
+        given = {
+            "--config": options.mermaid_config is not None,
+            "--preset": options.preset is not None,
+            "--icon-pack": options.icon_packs,
+            "--monochrome-icons": options.monochrome_icons,
+            "--font": options.font_files,
+        }
         return [
             warning(
                 "options/ignored",
@@ -281,7 +287,18 @@ def _ignored_options(
                 hint="set `look: handDrawn` in the source's frontmatter config instead",
             )
         )
-    if options.dark_theme is not None and "html" not in targets:
+    if options.preset is not None:
+        for flag, value in (("--theme", options.theme), ("--dark-theme", options.dark_theme)):
+            if value is not None:
+                ignored.append(
+                    warning(
+                        "options/ignored",
+                        f"{flag} has no effect with --preset {options.preset}: the preset pins "
+                        "the theme, and its dark mode follows the reader's colour scheme",
+                        hint=f"drop {flag}",
+                    )
+                )
+    elif options.dark_theme is not None and "html" not in targets:
         ignored.append(
             warning(
                 "options/ignored",
@@ -298,13 +315,22 @@ def _render(
 ) -> SvgResult:
     if engine is Engine.D2:
         return _render_d2(source, options, theme=options.theme, dark_theme=options.dark_theme)
+    return _render_mermaid(source, text, options, session, theme=options.theme)
+
+
+def _render_mermaid(
+    source: Source, text: str, options: RenderOptions, session: BrowserSession, *, theme: str | None
+) -> SvgResult:
     return render_mermaid(
         session,
         text,
-        theme=options.theme,
+        theme=theme,
         config=options.mermaid_config,
         icon_packs=options.icon_packs,
         svg_id=_svg_id(source),
+        preset=options.preset,
+        monochrome_icons=options.monochrome_icons,
+        font_files=options.font_files,
     )
 
 
@@ -373,14 +399,7 @@ def _viewer_variants(
             for theme in dict.fromkeys((light_id, dark_id))
         }
         return svgs[light_id], svgs[dark_id]
-    dark = render_mermaid(
-        session,
-        text,
-        theme=options.dark_theme or "dark",
-        config=options.mermaid_config,
-        icon_packs=options.icon_packs,
-        svg_id=_svg_id(source),
-    ).svg
+    dark = _render_mermaid(source, text, options, session, theme=options.dark_theme or "dark").svg
     return main.svg, dark
 
 

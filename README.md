@@ -33,9 +33,9 @@ from source. For development, use `uv tool install --editable .`.
 
 D2 is bundled by `d2-python-wrapper`, which fixes its release (0.6.8); a `d2` on PATH or in
 `MERMAID_ARCH_D2` takes precedence and is the only route to a newer D2. `doctor` names the
-binary in use and where it came from. Mermaid 12.3.0 is bundled in this package. A system
-Chromium/Chrome works, as does any Chromium already in Playwright's cache; otherwise install
-the matching Playwright build:
+binary in use and where it came from. Mermaid 12.3.0 is bundled in this package; fontTools
+subsets the fonts given to `--font`. A system Chromium/Chrome works, as does any Chromium
+already in Playwright's cache; otherwise install the matching Playwright build:
 
 ```sh
 mermaid-arch install-browser
@@ -44,11 +44,12 @@ mermaid-arch install-browser
 The renderer runs locally. It does not send source text to an online diagram service. The
 browser blocks external requests during rendering. D2 itself can fetch remote asset URLs;
 use trusted sources and local assets. Referenced Iconify packs download once from unpkg into
-the cache; no icon pack is downloaded for a diagram without icons. Packs retain their upstream
-licenses. A cached pack is never refreshed: `doctor` and the JSON receipt report its Iconify
-`lastModified`, which explains icons that differ between machines. `--icon-pack mdi=mdi@1.2.3`
-pins a pack to one npm release, cached under its own name, so every machine draws the same
-icons. To work offline, populate the cache beforehand with each pack's `icons.json`, named
+the cache; no icon pack is downloaded for a diagram without icons. Only the icons a diagram
+uses are sent to the render page. Packs retain their upstream licenses. A cached pack is never
+refreshed: `doctor` and the JSON receipt report its Iconify `lastModified`, which explains
+icons that differ between machines. `--icon-pack mdi=mdi@1.2.3` pins a pack to one npm
+release, cached under its own name, so every machine draws the same icons. To work offline,
+populate the cache beforehand with each pack's `icons.json`, named
 `<prefix>.json` or, for a pinned pack, `<prefix>@<version>.json` (for example
 `~/.cache/mermaid-arch/icons/mdi.json`). The generated HTML needs no renderer, browser
 extension, server or network connection.
@@ -59,6 +60,7 @@ extension, server or network connection.
 mermaid-arch render docs/architecture.mmd -f svg -f png -f html --json
 mermaid-arch render docs/architecture.d2 --layout elk --theme 0 --dark-theme 200 --pad 40
 mermaid-arch render docs/*.mmd --config docs/mermaid.json --icon-pack fas=mdi@1.2.3
+mermaid-arch render docs/*.mmd --preset archify --font fonts/JetBrainsMono-Regular.ttf
 mermaid-arch render docs/architecture.d2 -o /tmp/architecture.pdf
 mermaid-arch render docs/overview.d2 docs/pipeline.d2 --out-dir build/diagrams
 mermaid-arch render docs/boards.d2 --target layers.detail --sketch
@@ -76,7 +78,9 @@ from its suffix; `--out-dir` retains source stems. Sources that would overwrite 
 are rejected. PNG renders at its natural diagram size with a default 2× scale, not a fixed
 800-pixel viewport. Its maximum side is 16,384 pixels; diagnostics suggest a lower scale.
 PDF is a single page at the diagram's natural size, not A4 pagination. Mermaid SVG is written
-one element per line, so a checked-in file diffs by element.
+one element per line, so a checked-in file diffs by element. Mermaid CSS rules that match no
+element are dropped and path coordinates are rounded to three decimals, which roughly halves
+a small diagram's SVG.
 
 A Markdown source is rendered block by block: each fenced `mermaid` or `d2` block becomes
 `<stem>-<n>.<format>`, numbered in file order, and its diagnostics carry the Markdown file's
@@ -110,11 +114,28 @@ pins the theme. In its `themeCSS`, as in a source's, `:root` is the SVG itself, 
 paint the canvas and declare CSS variables; a `class` given to a named edge is also put on the
 edge's path, so the same CSS colours arrows by role.
 
+`--preset archify` is a built-in shared look ported from a project that rendered with mmdc: a
+dotted canvas, a monospace font stack, roomy spacing, colour per role class (`actor app sec data
+ext danger`) and a dashed border per status (`new later planned`). Nodes take a role with
+`class id role`, named edges with `class edgeId role`. It sits under `--config`, which sits
+under frontmatter; their `themeCSS` adds to the preset's. The preset pins the theme, so
+`--theme` and `--dark-theme` are ignored with a warning: its dark mode follows the reader's
+colour scheme, in the HTML viewer too, where the theme button switches only the page around
+the diagram. A source draws a key of role colours with `%% legend: app Service | data Store`
+and one line under it with `%% legend-arrows: TEXT`; `render --help` lists these directives.
+
 `--icon-pack NAME=PREFIX[@X.Y.Z]` serves an Iconify pack under another name. Mermaid draws
 `fas:fa-name` inside label text from a pack registered as `fas`, so `--icon-pack fas=mdi` puts
 `mdi:account` beside a title when the label says `fas:fa-account`. Without the flag, `fa` is
 Iconify's Font Awesome 4 pack and `fas`, `far` and `fab` are Font Awesome 6 solid, regular and
-brands.
+brands. Label icons keep their own colours, as icon shapes do; `--monochrome-icons` draws them
+in the text colour, Mermaid's default.
+
+Text is laid out with the fonts installed on the rendering machine. `--font FILE`, once per
+weight or style, lays it out with that TTF, OTF, WOFF or WOFF2 file instead, and embeds a
+WOFF2 subset of the glyphs used in the SVG, so it looks the same where the font is not
+installed. The config's `fontFamily` and `themeVariables.fontFamily` must name the font's
+family; a font no text uses is reported as `mermaid/font-unused`.
 
 ### Checked delivery
 

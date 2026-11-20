@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import base64
 import difflib
+import io
 import json
 import os
 import re
 import urllib.error
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from functools import cache
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
+from fontTools import subset
+from fontTools.ttLib import TTFont
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -58,7 +62,7 @@ BUNDLED_THEMES = (
 # packs stand behind Font Awesome's style prefixes; `fa` is an Iconify pack in its own right.
 FONT_AWESOME_PACKS = {"fas": "fa6-solid", "far": "fa6-regular", "fab": "fa6-brands"}
 _ICON = re.compile(
-    r"""\bicon\s*:\s*["'](?P<shape>[a-z0-9-]+:[a-z0-9-]+)["']"""
+    r"""(?:^|[{,])\s*icon\s*:\s*["']?(?P<shape>[a-z0-9-]+:[a-z0-9-]+)"""
     r"|^\s*(?:service|group)\s+[\w-]+\((?P<arch>[a-z0-9-]+:[a-z0-9-]+)\)"
     r"|\b(?P<label>fa[bklrs]?:fa-[\w-]+)"
 )
@@ -66,18 +70,25 @@ _FRONTMATTER = re.compile(r"\A\s*---[^\S\n]*\n.*?\n---[^\S\n]*(?:\n|$)", re.S)
 _DIRECTIVE = re.compile(r"%%\{.*?\}%%", re.S)
 _COMMENT = re.compile(r"^[ \t]*%%[^\n]*(?:\n|$)", re.M)
 _THEME_CSS = re.compile(r"""(?:^|[\s{,"'])themeCSS["']?\s*:""", re.M)
+_LEGEND = re.compile(r"^[ \t]*%%[ \t]*legend:(.*)$", re.M)
+_LEGEND_ARROWS = re.compile(r"^[ \t]*%%[ \t]*legend-arrows:(.*)$", re.M)
+_ROLE = re.compile(r"[A-Za-z_][\w-]*")
+_PRESETS = files("mermaid_arch") / "presets"
+# Built-in looks for --preset: `<name>.json` is Mermaid config, `<name>.css` its themeCSS.
+PRESETS = tuple(sorted(p.name[:-5] for p in _PRESETS.iterdir() if p.name.endswith(".json")))
 # One element per line keeps a checked-in SVG diffable. Labels stay whole: whitespace between
 # their inline elements would be drawn.
 _ELEMENT_BREAK = re.compile(r"(<(foreignObject|text)\b.*?</\2(?=>))|>(?=<)", re.S)
-_HTML = """<!doctype html><html><head><meta charset="utf-8"></head>
+_HTML = """<!doctype html><html><head><meta charset="utf-8"><style>{faces}</style></head>
 <body><div id="container"></div></body></html>"""
 _FONT_TAG = "data-mermaid-arch-font"
-_RENDER = """args => {
+_RENDER = r"""args => {
   // Start the render after this call returns, so that Python can wait for it with a deadline
   // that holds even while a layout never yields the main thread.
   setTimeout(async () => { window.mermaidArchResult = await render(args); }, 0);
 
-  async function render({source, id, theme, themes, site, packs, fontTag}) {
+  async function render({source, id, theme, themes, site, presetCSS, packs, fontTag, brandIcons,
+                         legend}) {
     try {
       // gitGraph commit ids and some layouts draw on Math.random: seed it for repeatable output.
       let seed = 1;
@@ -101,6 +112,8 @@ _RENDER = """args => {
       mermaid.registerIconPacks(packs.map(name => ({
         name, loader: () => fetch('/icons/' + name + '.json').then(r => r.json())
       })));
+      // Mermaid measures labels as it lays them out: --font faces must be loaded before that.
+      await Promise.all([...document.fonts].map(face => face.load()));
       const parsed = await mermaid.parse(source);
       const named = parsed.config?.theme ?? requested;
       if (!themes.includes(named)) return {ok: false, theme: String(named)};
@@ -108,10 +121,16 @@ _RENDER = """args => {
       const layout = effective.layout;
       // Frontmatter can replace the requested theme, but initialize() has already expanded
       // that theme's palette. Reinitialize from the effective theme to avoid mixed palettes.
-      if (effective.theme !== (config.theme || 'default')) {
-        config.theme = effective.theme;
-        mermaid.initialize(config);
+      let changed = effective.theme !== (config.theme || 'default');
+      if (changed) config.theme = effective.theme;
+      // Frontmatter themeCSS replaces the shared CSS. Put the preset's back under it, and mark
+      // the key secure so the render does not replace the merged CSS again.
+      if (presetCSS !== null && effective.themeCSS !== config.themeCSS) {
+        config.themeCSS = presetCSS + '\n' + effective.themeCSS;
+        config.secure = [...effective.secure, 'themeCSS'];
+        changed = true;
       }
+      if (changed) mermaid.initialize(config);
       const {svg} = await mermaid.render(id, source);
       const container = document.getElementById('container');
       container.innerHTML = svg;
@@ -152,7 +171,13 @@ _RENDER = """args => {
         const path = root.querySelector(`path[data-edge="true"][data-id="${CSS.escape(edge.id)}"]`);
         if (path) path.classList.add(...edge.classes);
       }
+      if (brandIcons) keepIconColours(root);
       await document.fonts.ready;
+      const unusedRoles = legend ? addLegend(root, legend) : [];
+      pruneStyles(root);
+      roundNumbers(root);
+      const text = [...root.querySelectorAll('text, foreignObject')]
+        .map(element => element.textContent).join('');
       const serialized = new XMLSerializer().serializeToString(root);
       // Mark one text element per font stack, after serializing: Python asks Chromium which
       // installed fonts drew each one.
@@ -166,9 +191,171 @@ _RENDER = """args => {
           element.setAttribute(fontTag, '');
         }
       }
-      return {ok: true, svg: serialized, layout, themeCSS: effective.themeCSS ?? null};
+      return {
+        ok: true, svg: serialized, layout, themeCSS: effective.themeCSS ?? null,
+        unusedRoles, text, stacks: [...stacks]
+      };
     } catch (e) {
       return {ok: false, message: String(e.message || e), line: e.hash?.loc?.first_line};
+    }
+  }
+
+  // Mermaid paints every label icon in the text colour; give each path its own fill back.
+  function keepIconColours(root) {
+    for (const path of root.querySelectorAll('svg.label-icon path')) {
+      const painted = path.closest('[fill]');
+      const fill = painted?.getAttribute('fill');
+      if (fill && fill.toLowerCase() !== 'currentcolor'
+          && path.closest('svg.label-icon').contains(painted)) {
+        path.style.fill = fill;
+      }
+    }
+  }
+
+  // A key of role squares in the top-left corner, beside the title when there is room above
+  // the diagram; otherwise the canvas grows upwards. Returns the roles that style nothing.
+  function addLegend(root, {items, arrows}) {
+    const make = (name, attributes, parent) => {
+      const element = document.createElementNS('http://www.w3.org/2000/svg', name);
+      for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, value);
+      return parent.appendChild(element);
+    };
+    const shapes = 'rect, path, polygon, circle, ellipse';
+    const samples = items.map(([role]) => {
+      const selector = '.' + CSS.escape(role);
+      const styled = root.querySelector('.node' + selector) ?? root.querySelector(selector);
+      return styled?.matches(shapes) ? styled : styled?.querySelector(shapes) ?? null;
+    });
+    const unused = items.filter((_, index) => !samples[index]).map(([role]) => role);
+    const square = 11, gap = 6, row = 16, margin = 12, inset = 16;
+    const legend = make('g', {class: 'legend'}, root);
+    const entries = items.map(([role, label], index) => {
+      // The square sits in a group of the role's class, so classDef rules (`.role > *`) and
+      // role variables reach it; the colours of the role's first shape are its fallback.
+      const group = make('g', {class: role}, legend);
+      const swatch = make('rect', {width: square, height: square, rx: 2}, group);
+      if (samples[index]) {
+        const style = getComputedStyle(samples[index]);
+        for (const name of ['fill', 'stroke', 'stroke-dasharray']) {
+          swatch.setAttribute(name, style.getPropertyValue(name));
+        }
+      }
+      const text = make('text', {'font-size': 11}, legend);
+      text.textContent = label;
+      return [swatch, text];
+    });
+    const note = arrows ? make('text', {'font-size': 11}, legend) : null;
+    if (note) note.textContent = arrows;
+    const columns = items.length > 4 ? 2 : 1;
+    const rows = Math.ceil(items.length / columns);
+    const column = square + gap + inset
+      + Math.max(...entries.map(([, text]) => text.getComputedTextLength()));
+    const width = Math.max(columns * column - inset, note?.getComputedTextLength() ?? 0);
+    const height = row * (rows + (note ? 1 : 0));
+    const box = root.viewBox.baseVal;
+    const {x, y} = box;
+    let {width: w, height: h} = box;
+    const user = root.getScreenCTM().inverse();
+    const corner = element => {
+      const rect = element.getBoundingClientRect();
+      return new DOMPoint(rect.left, rect.top).matrixTransform(user);
+    };
+    const title = root.querySelector(':scope > text, .flowchartTitleText');
+    const tops = [...root.children]
+      .filter(element => element instanceof SVGGraphicsElement && element !== legend
+        && element !== title && element.getBoundingClientRect().height)
+      .map(element => corner(element).y);
+    const band = (tops.length ? Math.min(...tops) : y) - y - margin;
+    const beside = x + inset + width < (title ? corner(title).x : x + w) - 2 * margin;
+    const extra = beside ? Math.max(0, height + margin - band) : height + margin;
+    const top = y - extra + margin;
+    const round = value => Math.round(value * 1000) / 1000;
+    entries.forEach(([swatch, text], index) => {
+      const left = x + inset + Math.floor(index / rows) * column;
+      const offset = top + (index % rows) * row;
+      swatch.setAttribute('x', round(left));
+      swatch.setAttribute('y', round(offset));
+      text.setAttribute('x', round(left + square + gap));
+      text.setAttribute('y', round(offset + 9.5));
+    });
+    if (note) {
+      note.setAttribute('x', round(x + inset));
+      note.setAttribute('y', round(top + rows * row + 9.5));
+    }
+    w = Math.max(w, 2 * inset + width);
+    h += extra;
+    root.setAttribute('viewBox', [x, y - extra, w, h].map(round).join(' '));
+    if (root.style.maxWidth) root.style.maxWidth = `${round(w)}px`;
+    for (const [name, value] of [['width', w], ['height', h]]) {
+      if (/^[\d.]+(px)?$/.test(root.getAttribute(name) ?? '')) {
+        root.setAttribute(name, round(value));
+      }
+    }
+    return unused;
+  }
+
+  // Mermaid ships the CSS of everything its diagram type can draw. Keep the rules that match
+  // an element here, counting a :hover or ::before rule as its element's; keep at-rules.
+  function pruneStyles(root) {
+    const pseudos = ['hover', 'active', 'focus', 'focus-visible', 'focus-within', 'visited',
+                     'target', 'before', 'after', 'first-line', 'first-letter', 'selection',
+                     'placeholder', 'marker'];
+    const state = new RegExp('::?(?:' + pseudos.join('|') + ')(?![\\w-])', 'g');
+    const live = selectors => {
+      const plain = selectors.replace(state, '');
+      try {
+        return root.matches(plain) || root.querySelector(plain) !== null;
+      } catch {
+        return true;
+      }
+    };
+    // The CSS without dead rules, or null when it does not parse as balanced blocks.
+    const prune = css => {
+      let kept = '', start = 0, open = 0, depth = 0, quote = '';
+      for (let i = 0; i < css.length; i++) {
+        const c = css[i];
+        if (c === '\\') { i++; continue; }
+        if (quote) { if (c === quote) quote = ''; continue; }
+        if (c === '"' || c === "'") quote = c;
+        else if (c === '{') { if (depth++ === 0) open = i; }
+        else if (c === '}') {
+          if (--depth < 0) return null;
+          if (depth > 0) continue;
+          const prelude = css.slice(start, open).trim();
+          if (/^@(?:media|supports)\b/.test(prelude)) {
+            const inner = prune(css.slice(open + 1, i));
+            if (inner === null) return null;
+            if (inner.trim()) kept += css.slice(start, open + 1) + inner + '}';
+          } else if (prelude.startsWith('@') || live(prelude)) {
+            kept += css.slice(start, i + 1);
+          }
+          start = i + 1;
+        } else if (c === ';' && depth === 0) {
+          kept += css.slice(start, i + 1);
+          start = i + 1;
+        }
+      }
+      return depth === 0 && !quote ? kept + css.slice(start) : null;
+    };
+    for (const style of root.querySelectorAll('style')) {
+      const kept = prune(style.textContent);
+      if (kept !== null) style.textContent = kept;
+    }
+  }
+
+  // Layout writes coordinates with up to 17 digits; a thousandth of a unit is invisible.
+  // Icon artwork, in nested <svg> elements, keeps its own numbers and compact path syntax.
+  function roundNumbers(root) {
+    for (const element of root.querySelectorAll('[d], [points], [transform]')) {
+      if (element.ownerSVGElement !== root) continue;
+      for (const name of ['d', 'points', 'transform']) {
+        const value = element.getAttribute(name);
+        if (!value) continue;
+        // Never part of a number: in compact path data `1.5.25` is two numbers, as is `1-0.5`.
+        const rounded = value.replace(/(?<![\d.])-?\d+\.\d{4,}(?:e[-+]?\d+)?(?![\d.])/g,
+          number => String(Math.round(number * 1000) / 1000));
+        if (rounded !== value) element.setAttribute(name, rounded);
+      }
     }
   }
 }"""
@@ -189,14 +376,23 @@ def render_mermaid(
     config: Mapping[str, object] | None = None,
     icon_packs: Mapping[str, str] | None = None,
     svg_id: str = "mermaid-arch",
+    preset: str | None = None,
+    monochrome_icons: bool = False,
+    font_files: Sequence[Path] = (),
 ) -> SvgResult:
     """Render `source`; `config` is shared Mermaid config that frontmatter overrides per key.
 
     `icon_packs` maps a pack name used in the source to the Iconify pack that serves it,
     written `prefix` or, pinned to a release, `prefix@version`. `svg_id`, matching
     `[a-z][a-z0-9-]*`, is the SVG root's id, which scopes its CSS: SVGs that share a page
-    need distinct ones.
+    need distinct ones. `preset`, one of `PRESETS`, is config that `config` and frontmatter
+    override per key; their themeCSS adds to its.
+    `monochrome_icons` leaves label icons in the text colour, as Mermaid draws them.
+    `font_files` lay the text out and are embedded, cut down to the characters drawn.
     """
+    base = load_preset(preset) if preset else {}
+    site = merge_config(base, config or {})
+    legend, legend_line = _legend(source)
     served = {**FONT_AWESOME_PACKS, **(icon_packs or {})}
     references: dict[str, list[tuple[str, str, int]]] = {}
     for number, line in enumerate(source.splitlines(), 1):
@@ -209,8 +405,21 @@ def render_mermaid(
                 icon = icon.removeprefix("fa-")
             references.setdefault(name, []).append((written, icon, number))
 
-    routes: dict[str, bytes | str | Path] = {"/": _HTML}
     problems: list[Diagnostic] = []
+    routes: dict[str, bytes | str | Path] = {}
+    faces: list[tuple[Path, str, str, str]] = []
+    declared: list[str] = []
+    for path in font_files:
+        try:
+            face = read_font(path)
+        except ValueError as exc:
+            problems.append(error("mermaid/font-unreadable", f"cannot read {path}: {exc}"))
+            continue
+        url = f"/fonts/{len(faces)}{path.suffix.lower()}"
+        routes[url] = path
+        declared.append(_font_face(*face, f'src:url("{url}")'))
+        faces.append((path, *face))
+    routes["/"] = _HTML.format(faces="".join(declared))
     modified: dict[str, int | None] = {}
     for name, uses in references.items():
         spec = served.get(name, name)
@@ -234,7 +443,9 @@ def render_mermaid(
                 problems.append(
                     error("mermaid/icon-unknown", f"unknown icon {written}", line=line, hint=hint)
                 )
-        routes[f"/icons/{name}.json"] = path
+        # Only the icons drawn: a whole pack is megabytes for Chromium to fetch and parse.
+        used = {icon for _, icon, _ in uses}
+        routes[f"/icons/{name}.json"] = json.dumps(_subset(pack, used))
         stamp = pack.get("lastModified")
         modified[spec] = stamp if isinstance(stamp, int) else None
     if problems:
@@ -251,9 +462,12 @@ def render_mermaid(
                     "id": svg_id,
                     "theme": theme,
                     "themes": list(BUNDLED_THEMES),
-                    "site": dict(config or {}),
+                    "site": site,
+                    "presetCSS": base.get("themeCSS"),
                     "packs": list(references),
                     "fontTag": _FONT_TAG,
+                    "brandIcons": not monochrome_icons,
+                    "legend": legend,
                 },
             )
             result = page.wait_for_function(
@@ -317,7 +531,7 @@ def render_mermaid(
             )
         )
     css_line = _theme_css_line(source)
-    if css_line is not None and result["themeCSS"] == (config or {}).get("themeCSS"):
+    if css_line is not None and result["themeCSS"] == site.get("themeCSS"):
         diagnostics.append(
             warning(
                 "mermaid/theme-css-dropped",
@@ -327,8 +541,155 @@ def render_mermaid(
                 "write `.a > .b` as `.a .b`, or move the CSS into the --config file",
             )
         )
+    for role in result["unusedRoles"]:
+        diagnostics.append(
+            warning(
+                "mermaid/legend-role-unused",
+                f"the legend lists role {role!r}, but no element has that class",
+                line=legend_line,
+                hint=f"give a node the role with `class ID {role}`, or drop it from the legend",
+            )
+        )
     svg = _ELEMENT_BREAK.sub(lambda m: m[1] or ">\n", result["svg"])
+    named = {
+        family.strip().strip("\"'").lower()
+        for stack in result["stacks"]
+        for family in stack.split(",")
+    }
+    embedded: list[str] = []
+    for path, family, weight, style in faces:
+        if family.lower() not in named:
+            diagnostics.append(
+                warning(
+                    "mermaid/font-unused",
+                    f"no text names font family {family!r}, so {path} is not embedded",
+                    hint=f'start fontFamily and themeVariables.fontFamily with "{family}" '
+                    "in the --config file or frontmatter",
+                )
+            )
+        elif result["text"]:
+            embedded.append(_embedded_face(path, family, weight, style, result["text"]))
+    if embedded:
+        # The root element is the first line; the faces go before Mermaid's own <style>.
+        head, _, rest = svg.partition("\n")
+        svg = f"{head}\n<style>{''.join(embedded)}</style>\n{rest}"
     return SvgResult(svg, tuple(diagnostics), modified, fonts)
+
+
+def load_preset(name: str) -> dict[str, object]:
+    """The Mermaid config of built-in preset `name`, one of `PRESETS`."""
+    config = json.loads((_PRESETS / f"{name}.json").read_text(encoding="utf-8"))
+    css = _PRESETS / f"{name}.css"
+    if css.is_file():
+        config["themeCSS"] = css.read_text(encoding="utf-8")
+    return config
+
+
+def merge_config(base: Mapping[str, object], over: Mapping[str, object]) -> dict[str, object]:
+    """`over` on top of `base`: objects merge key by key, and themeCSS adds to the base's."""
+    merged = dict(base)
+    for key, value in over.items():
+        below = merged.get(key)
+        if isinstance(below, Mapping) and isinstance(value, Mapping):
+            merged[key] = merge_config(below, value)
+        elif key == "themeCSS" and isinstance(below, str) and isinstance(value, str):
+            merged[key] = f"{below}\n{value}"
+        else:
+            merged[key] = value
+    return merged
+
+
+def read_font(path: Path) -> tuple[str, str, str]:
+    """CSS font-family, font-weight and font-style of the font file at `path`."""
+    try:
+        with TTFont(path, lazy=True) as font:
+            family = font["name"].getBestFamilyName()
+            os2 = font["OS/2"]
+            axes = {axis.axisTag: axis for axis in font["fvar"].axes} if "fvar" in font else {}
+            weight = (
+                f"{axes['wght'].minValue:g} {axes['wght'].maxValue:g}"
+                if "wght" in axes
+                else str(os2.usWeightClass)
+            )
+            style = "italic" if os2.fsSelection & 1 else "normal"
+    except OSError as exc:
+        raise ValueError(exc.strerror or str(exc)) from None
+    except Exception as exc:  # fontTools raises many types for a file that is not a font
+        raise ValueError(f"not a single TTF, OTF, WOFF or WOFF2 font ({exc})") from None
+    if not family:
+        raise ValueError("the font names no family")
+    return family, weight, style
+
+
+def _font_face(family: str, weight: str, style: str, source: str) -> str:
+    return (
+        f"@font-face{{font-family:{json.dumps(family)};font-weight:{weight};"
+        f"font-style:{style};{source}}}"
+    )
+
+
+def _embedded_face(path: Path, family: str, weight: str, style: str, text: str) -> str:
+    """An @font-face carrying the glyphs of `text` from `path` as WOFF2."""
+    font = TTFont(path, recalcTimestamp=False)  # a fresh timestamp would change every render
+    subsetter = subset.Subsetter(subset.Options())
+    subsetter.populate(text=text)
+    subsetter.subset(font)
+    font.flavor = "woff2"
+    data = io.BytesIO()
+    font.save(data)
+    codes = sorted({ord(char) for char in text})
+    runs: list[list[int]] = []
+    for code in codes:
+        if runs and runs[-1][1] == code - 1:
+            runs[-1][1] = code
+        else:
+            runs.append([code, code])
+    # Faces of one family from several inlined SVGs combine: each draws the characters it has.
+    ranges = ",".join(f"U+{a:X}" if a == b else f"U+{a:X}-{b:X}" for a, b in runs)
+    encoded = base64.b64encode(data.getvalue()).decode()
+    source = f'unicode-range:{ranges};src:url(data:font/woff2;base64,{encoded}) format("woff2")'
+    return _font_face(family, weight, style, source)
+
+
+def _legend(source: str) -> tuple[dict[str, object] | None, int | None]:
+    """The `%% legend:` directive as render arguments, and its line."""
+    found = _LEGEND.search(source)
+    if found is None:
+        return None, None
+    line = source.count("\n", 0, found.start()) + 1
+    items: list[list[str]] = []
+    for entry in found[1].split("|"):
+        role, _, label = entry.strip().partition(" ")
+        if not _ROLE.fullmatch(role) or not label.strip():
+            raise DiagramError(
+                error(
+                    "mermaid/legend",
+                    f"legend entry {entry.strip()!r} is not a role followed by its label",
+                    line=line,
+                    hint="write `%% legend: role Label | role Label`, each role a class name",
+                )
+            )
+        items.append([role, label.strip()])
+    arrows = _LEGEND_ARROWS.search(source)
+    return {"items": items, "arrows": arrows[1].strip() if arrows else None}, line
+
+
+def _subset(pack: Mapping[str, Any], names: set[str]) -> dict[str, Any]:
+    """`pack` with only the icons and aliases `names` draw on; an alias's parent may be one."""
+    icons, aliases = pack["icons"], pack.get("aliases", {})
+    kept_icons: dict[str, Any] = {}
+    kept_aliases: dict[str, Any] = {}
+    pending = sorted(names)
+    while pending:
+        name = pending.pop()
+        if name in icons:
+            kept_icons[name] = icons[name]
+        elif name in aliases and name not in kept_aliases:
+            kept_aliases[name] = aliases[name]
+            parent = aliases[name].get("parent") if isinstance(aliases[name], dict) else None
+            if isinstance(parent, str):
+                pending.append(parent)
+    return {**pack, "icons": kept_icons, "aliases": kept_aliases}
 
 
 @cache
