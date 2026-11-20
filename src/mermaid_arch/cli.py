@@ -17,6 +17,7 @@ from time import sleep
 from mermaid_arch import __version__
 from mermaid_arch.browser import BrowserSession
 from mermaid_arch.doctor import run_doctor
+from mermaid_arch.mermaid import PRESETS, read_font
 from mermaid_arch.models import (
     MARKDOWN_SUFFIXES,
     OUTPUT_FORMATS,
@@ -33,6 +34,10 @@ WATCH_INTERVAL_SECONDS = 0.5
 _CSS_COLOUR = re.compile(r"[A-Za-z0-9#(),.% -]+")
 _ICON_PACK = re.compile(r"([a-z0-9-]+)=([a-z0-9-]+(?:@\d+\.\d+\.\d+)?)")
 _SUFFIX_FORMATS: dict[str, OutputFormat] = {f".{fmt}": fmt for fmt in OUTPUT_FORMATS}
+# Comments in a Mermaid source that the renderer reads.
+_DIRECTIVES = """Mermaid source directives:
+  %% legend: ROLE Label | ROLE Label    draw a key of role colours, ROLE a class nodes carry
+  %% legend-arrows: TEXT                one line under the key that explains the arrows"""
 
 Job = tuple[Source, dict[OutputFormat, Path]]
 # A SOURCE that yields no diagram, such as a missing Markdown file, plans as its failed Result.
@@ -83,7 +88,12 @@ def _parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParse
     parser.add_argument("--version", action="version", version=f"mermaid-arch {__version__}")
     commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
-    render = commands.add_parser("render", help="render sources to files")
+    render = commands.add_parser(
+        "render",
+        help="render sources to files",
+        epilog=_DIRECTIVES,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     _sources(render)
     render.add_argument(
         "-f",
@@ -181,6 +191,26 @@ def _engine_options(parser: argparse.ArgumentParser) -> None:
         help="serve Iconify pack PREFIX, optionally pinned to release X.Y.Z, as Mermaid pack "
         "NAME; fas=mdi draws fas:fa-account in a label from mdi:account",
     )
+    parser.add_argument(
+        "--preset",
+        choices=PRESETS,
+        help="built-in Mermaid look, which --config and frontmatter override: archify colours "
+        "nodes by role class (actor app sec data ext danger new later planned)",
+    )
+    parser.add_argument(
+        "--monochrome-icons",
+        action="store_true",
+        help="draw Mermaid label icons in the text colour instead of their own colours",
+    )
+    parser.add_argument(
+        "--font",
+        dest="font_files",
+        action="append",
+        type=_font_file,
+        metavar="FILE",
+        help="lay Mermaid text out with this TTF/OTF/WOFF/WOFF2 font and embed the glyphs used; "
+        "repeat for each weight or style; the config's fontFamily must name its family",
+    )
 
 
 def _scale(value: str) -> float:
@@ -191,6 +221,14 @@ def _scale(value: str) -> float:
     if not math.isfinite(scale) or scale <= 0:
         raise argparse.ArgumentTypeError(f"must be a number greater than 0, got {value!r}")
     return scale
+
+
+def _font_file(value: str) -> Path:
+    try:
+        read_font(Path(value))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"cannot read {value}: {exc}") from None
+    return Path(value)
 
 
 def _pad(value: str) -> int:
@@ -329,7 +367,10 @@ def _options(args: argparse.Namespace) -> RenderOptions:
         target=args.target,
         sketch=args.sketch,
         mermaid_config=args.config,
+        preset=args.preset,
         icon_packs=dict(args.icon_packs or ()),
+        monochrome_icons=args.monochrome_icons,
+        font_files=tuple(args.font_files or ()),
     )
     if args.command == "check":
         return options
