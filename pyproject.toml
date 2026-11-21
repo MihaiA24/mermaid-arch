@@ -1,6 +1,6 @@
 [project]
 name = "mermaid-arch"
-version = "0.1.0"
+version = "0.1.1"
 description = "Render Mermaid and D2 architecture diagrams to checked SVG, PNG, PDF and standalone HTML."
 readme = "README.md"
 license = "MIT"

@@ -27,6 +27,12 @@ jobs:
         run: uv run --frozen ruff check .
       - if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         run: uv run --frozen ruff format --check .
+      # Agents run the CLI from the wheel URL in SKILL.md: a stale pin serves an old CLI.
+      - if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        name: Check every release pinned in the docs is the project version
+        run: |
+          pins=$(grep -rhoE '(download/v|#v|--tag v|mermaid_arch-)[0-9]+(\.[0-9]+)+' README.md skills | grep -oE '[0-9.]+$' | sort -u)
+          test "$pins" = "$(uv version --short)"
       # The runner's Google Chrome renders (on PATH on Linux, under /Applications on macOS);
       # browser tests fail rather than skip when no Chromium launches.
       - run: uv run --frozen pytest -q

@@ -6,8 +6,15 @@ license: MIT
 
 # Mermaid Arch
 
-Keep the editable diagram beside its documentation. The renderer is `mermaid-arch`, installed
-as a uv tool; commands run from the project working directory.
+Keep the editable diagram beside its documentation. The renderer is the `mermaid-arch` CLI of
+this skill's release, run through uv with no install step:
+
+```sh
+uvx --from https://github.com/MihaiA24/mermaid-arch/releases/download/v0.1.1/mermaid_arch-0.1.1-py3-none-any.whl mermaid-arch
+```
+
+Below, `mermaid-arch` stands for that whole command. Commands run from the project working
+directory.
 
 ## Workflow
 
@@ -56,15 +63,11 @@ as a uv tool; commands run from the project working directory.
 
 ## Setup branch
 
-When the command is missing, install it from GitHub:
-
-```sh
-uv tool install git+https://github.com/MihaiA24/mermaid-arch
-mermaid-arch doctor
-```
-
-From a local checkout, use `uv tool install /path/to/mermaid-arch` instead. If doctor reports
-no browser, run `mermaid-arch install-browser`. D2 ships with its Python wrapper; a working
-`d2` on `PATH` takes precedence. Mermaid is bundled; rendering never sends diagram content to
-an online renderer. Referenced Iconify packs download once into the local cache. For offline
-use, populate the cache beforehand as described in the repository README.
+When `uvx` is missing, install [uv](https://docs.astral.sh/uv/getting-started/installation/).
+The first call downloads the release once; later calls start from uv's cache. To run an
+unreleased checkout instead, use `uv run --project /path/to/mermaid-arch mermaid-arch`.
+If a render or `mermaid-arch doctor` reports no browser, run `mermaid-arch install-browser`.
+D2 ships with its Python wrapper; a working `d2` on `PATH` takes precedence. Mermaid is bundled;
+rendering never sends diagram content to an online renderer. Referenced Iconify packs download
+once into the local cache. For offline use, populate the cache beforehand as described in the
+repository README.

@@ -13,22 +13,28 @@ source paths, and layout/theme settings live in the diagrams themselves.
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Everything installs from GitHub;
 nothing is published to PyPI. Each `vX.Y.Z` release attaches a wheel and an sdist.
 
-As a command-line tool:
+Run a release without installing it:
 
 ```sh
-uv tool install git+https://github.com/MihaiA24/mermaid-arch          # main
-uv tool install git+https://github.com/MihaiA24/mermaid-arch@v0.1.0   # a release
+uvx --from https://github.com/MihaiA24/mermaid-arch/releases/download/v0.1.1/mermaid_arch-0.1.1-py3-none-any.whl mermaid-arch doctor
+```
+
+Or install it as a command-line tool:
+
+```sh
+uv tool install https://github.com/MihaiA24/mermaid-arch/releases/download/v0.1.1/mermaid_arch-0.1.1-py3-none-any.whl
+uv tool install git+https://github.com/MihaiA24/mermaid-arch   # or main, built from source
 mermaid-arch doctor
 ```
 
 As a dependency of another project, for example a dev tool run as `uv run mermaid-arch render`:
 
 ```sh
-uv add --dev "mermaid-arch @ https://github.com/MihaiA24/mermaid-arch/releases/download/v0.1.0/mermaid_arch-0.1.0-py3-none-any.whl"
+uv add --dev "mermaid-arch @ https://github.com/MihaiA24/mermaid-arch/releases/download/v0.1.1/mermaid_arch-0.1.1-py3-none-any.whl"
 ```
 
 The release wheel needs no git or build step, and pip accepts the same URL.
-`uv add --dev git+https://github.com/MihaiA24/mermaid-arch --tag v0.1.0` builds the same release
+`uv add --dev git+https://github.com/MihaiA24/mermaid-arch --tag v0.1.1` builds the same release
 from source. For development, use `uv tool install --editable .`.
 
 D2 is bundled by `d2-python-wrapper`, which fixes its release (0.6.8); a `d2` on PATH or in
@@ -171,7 +177,7 @@ its `block` number. An error example:
 ```json
 {
   "ok": false,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "results": [{
     "source": "docs/architecture.d2",
     "engine": "d2",
@@ -202,12 +208,12 @@ Chromium.
 
 ## Install the skill
 
-The skill drives the CLI; install the CLI as above, or let the skill's setup step install it.
+The skill runs the CLI through `uvx` from the release it documents, so only uv needs installing.
 
 Claude Code, as a plugin from this repository's marketplace:
 
 ```sh
-claude plugin marketplace add MihaiA24/mermaid-arch   # append #v0.1.0 to stay on a release
+claude plugin marketplace add MihaiA24/mermaid-arch   # append #v0.1.1 to stay on a release
 claude plugin install mermaid-arch@mermaid-arch
 ```
 
@@ -258,8 +264,9 @@ npm release's `dist/mermaid.min.js` into `src/mermaid_arch/assets/mermaid.min.js
 version, checksum and license in `THIRD_PARTY_NOTICES.md`. Re-render the examples and check
 both themes; SVG markup and parser behavior can change between releases.
 
-To release, set `version` in `pyproject.toml`, commit, then tag and push `vX.Y.Z`. CI runs the
-checks above, confirms the tag names the project version, builds, and publishes a GitHub release
-with the wheel and sdist.
+To release, set `version` in `pyproject.toml` and every pinned release in this README and
+`SKILL.md` to it, commit, then tag and push `vX.Y.Z` right away: until the release job finishes,
+the pinned wheel URLs return 404. CI checks that the pins name the project version, confirms the
+tag names it too, builds, and publishes a GitHub release with the wheel and sdist.
 
 MIT; see [LICENSE](LICENSE) and [third-party notices](THIRD_PARTY_NOTICES.md).
