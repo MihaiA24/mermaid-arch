@@ -70,7 +70,7 @@ def _mermaid() -> Check:
             "mermaid",
             "missing",
             f"the bundled mermaid.min.js ({MERMAID_VERSION}) is not in the installed package",
-            hint="reinstall: uv tool install --reinstall mermaid-arch",
+            hint="reinstall mermaid-arch as the README's Install section shows",
         )
     return Check("mermaid", "ok", f"{MERMAID_VERSION} (bundled)")
 
