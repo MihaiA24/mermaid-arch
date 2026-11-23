@@ -632,10 +632,10 @@ def read_font(path: Path) -> tuple[str, str, str]:
 
 
 def _font_face(family: str, weight: str, style: str, source: str) -> str:
-    return (
-        f"@font-face{{font-family:{json.dumps(family)};font-weight:{weight};"
-        f"font-style:{style};{source}}}"
-    )
+    # CSS escapes, not JSON's \uXXXX (CSS reads `\u` as `u`); `<` stops a `</style>` in a
+    # crafted font's name closing the render page's style element.
+    name = re.sub(r'[\\"<\x00-\x1f\x7f]', lambda m: f"\\{ord(m[0]):x} ", family)
+    return f'@font-face{{font-family:"{name}";font-weight:{weight};font-style:{style};{source}}}'
 
 
 def _embedded_face(path: Path, family: str, weight: str, style: str, text: str) -> str:

@@ -276,8 +276,8 @@ def test_config_merges_over_a_preset_key_by_key() -> None:
     }
 
 
-def _font(path: Path) -> Path:
-    """A TrueType font, family `Test & Face`, with a wide square for every letter a to z."""
+def _font(path: Path, family: str = "Test & Face") -> Path:
+    """A TrueType font, family `family`, with a wide square for every letter a to z."""
     letters = [chr(code) for code in range(ord("a"), ord("z") + 1)]
     names = [".notdef", *letters]
     builder = FontBuilder(1000, isTTF=True)
@@ -295,7 +295,7 @@ def _font(path: Path) -> Path:
     builder.setupGlyf(glyphs)
     builder.setupHorizontalMetrics({name: (1000, 0) for name in names})
     builder.setupHorizontalHeader(ascent=800, descent=-200)
-    builder.setupNameTable({"familyName": "Test & Face", "styleName": "Regular"})
+    builder.setupNameTable({"familyName": family, "styleName": "Regular"})
     builder.setupOS2()
     builder.setupPost()
     builder.save(path)
@@ -303,14 +303,17 @@ def _font(path: Path) -> Path:
 
 
 @pytest.mark.browser
-def test_font_lays_text_out_and_travels_inside_the_svg(browser_session, tmp_path: Path) -> None:
-    font = _font(tmp_path / "test.ttf")
+@pytest.mark.parametrize("family", ["Test & Face", "Tést Face"])
+def test_font_lays_text_out_and_travels_inside_the_svg(
+    browser_session, tmp_path: Path, family: str
+) -> None:
+    font = _font(tmp_path / "test.ttf", family)
     graph = "flowchart LR\n a[abcdefghijklmnopqrstuvwxyz] --> b[label]"  # wider than the minimum
-    config = {"fontFamily": '"Test & Face"', "themeVariables": {"fontFamily": '"Test & Face"'}}
+    config = {"fontFamily": f'"{family}"', "themeVariables": {"fontFamily": f'"{family}"'}}
     first = render_mermaid(browser_session, graph, config=config, font_files=[font])
     root = ET.fromstring(first.svg)  # well-formed although the family name holds `&`
     css = "".join(style.text or "" for style in root.iter("{http://www.w3.org/2000/svg}style"))
-    assert '@font-face{font-family:"Test & Face"' in css
+    assert f'@font-face{{font-family:"{family}"' in css
     assert "data:font/woff2;base64," in css
     assert not first.warnings
     assert render_mermaid(browser_session, graph, config=config, font_files=[font]) == first
