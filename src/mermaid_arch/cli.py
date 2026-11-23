@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import math
 import re
 import subprocess
@@ -46,6 +47,9 @@ _Render = Callable[[Source, dict[OutputFormat, Path]], Result]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    # Findings travel as diagnostics. fontTools warns about every font table a --font subset
+    # drops, such as FontForge's FFTM timestamp; on stderr that would read as a problem.
+    logging.getLogger("fontTools").setLevel(logging.ERROR)
     parser, subparsers = _parser()
     args = parser.parse_args(argv)
     if args.command == "doctor":
