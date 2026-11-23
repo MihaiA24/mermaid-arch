@@ -55,6 +55,22 @@ def test_batch_continues_after_missing_source_and_out_dir(tmp_path: Path, capsys
     assert ET.parse(directory / "good.svg").getroot().tag == "{http://www.w3.org/2000/svg}svg"
 
 
+def test_batch_reports_ignored_options_on_the_first_readable_source(tmp_path: Path, capsys) -> None:
+    first = tmp_path / "first.d2"
+    second = tmp_path / "second.d2"
+    for source in (first, second):
+        source.write_text("a -> b")
+
+    args = ["--preset", "archify", "--monochrome-icons", "--json"]
+    assert main(["render", str(tmp_path / "missing.d2"), str(first), str(second), *args]) == 1
+    results = json.loads(capsys.readouterr().out)["results"]
+    assert [result["ok"] for result in results] == [False, True, True]
+    assert [
+        [d["message"].split()[0] for d in result["diagnostics"] if d["code"] == "options/ignored"]
+        for result in results
+    ] == [[], ["--preset", "--monochrome-icons"], []]
+
+
 def test_output_inference_and_check_writes_nothing(tmp_path: Path, capsys) -> None:
     source = tmp_path / "diagram.d2"
     source.write_text("a -> b")
@@ -223,6 +239,8 @@ def test_watch_rerenders_a_changed_source_until_interrupted(
         source.write_text("a -> changed")
 
     monkeypatch.setattr("mermaid_arch.cli.sleep", nap)
-    assert main(["render", str(source), "--watch"]) == 0
-    assert capsys.readouterr().out.count(f"{source} -> ") == 2
+    assert main(["render", str(source), "--preset", "archify", "--watch"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.count(f"{source} -> ") == 2
+    assert captured.err.count("warning options/ignored: --preset has no effect") == 2
     assert ">changed<" in source.with_suffix(".svg").read_text()

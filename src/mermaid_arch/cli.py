@@ -71,6 +71,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         if args.watch:
             return _watch(args.sources, partial(_rerender, args, command, formats, render))
+        render = partial(render, warned_engines=set())
         results = [_run(item, render, args) for item in plan]
     ok = all(result.ok for result in results)
     if args.json:

@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from playwright.sync_api import Error as PlaywrightError
 
 from mermaid_arch.browser import BrowserSession
+from mermaid_arch.mermaid import render_mermaid
 from mermaid_arch.models import Engine, RenderOptions, Source
 from mermaid_arch.pipeline import render_source
+from mermaid_arch.viewer import build_html
 
 
 class CrashedChromium:
@@ -60,3 +63,32 @@ def test_mermaid_svg_ids_follow_output_names_and_fonts_are_reported(
         assert result.to_json()["fonts"]
         ids.append(ET.parse(target).getroot().get("id"))
     assert ids == ["mermaid-arch-first", "mermaid-arch-second-draft"]
+
+
+@pytest.mark.browser
+@pytest.mark.parametrize(
+    "options",
+    [
+        RenderOptions(preset="archify", dark_theme="forest"),
+        RenderOptions(mermaid_config={"theme": "base"}, dark_theme="forest"),
+    ],
+)
+def test_html_renders_mermaid_once_when_the_theme_is_pinned(
+    browser_session, tmp_path: Path, options: RenderOptions
+) -> None:
+    text = "flowchart TB\n a --> b"
+    source = Source(tmp_path / "diagram.mmd", text=text)
+    targets = {"svg": tmp_path / "diagram.svg", "html": tmp_path / "diagram.html"}
+    with patch("mermaid_arch.pipeline.render_mermaid", wraps=render_mermaid) as render:
+        result = render_source(source, targets, options, browser_session)
+
+    assert result.ok, result.diagnostics
+    assert render.call_count == 1
+    expected = build_html(
+        title="diagram",
+        engine=Engine.MERMAID,
+        source=text,
+        light_svg=targets["svg"].read_text(),
+        dark_svg=None,
+    )
+    assert targets["html"].read_bytes() == expected.encode()
