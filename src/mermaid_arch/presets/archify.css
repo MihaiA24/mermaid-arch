@@ -51,11 +51,17 @@
 .new { --stroke: var(--amber); --fill: var(--amber-fill); --dash: 6 4; }
 .later { --stroke: var(--amber); --fill: var(--lane-fill); --dash: 2 4; }
 .planned { --stroke: var(--slate); --fill: transparent; --dash: 4 4; --text: var(--muted); }
-/* Every node outline, rect or not: some shapes draw it as a group of fill and stroke paths. */
-.node > :is(rect, .label-container), .node > g.label-container > :is(path, circle) {
+/* Every node outline, rect or not: some shapes draw it as groups of fill and stroke paths, rims
+   and bars. Plain `text` (`rect.text`) stays borderless, as Mermaid draws it. Markers drawn as a
+   bare `g > path` or `circle.state-start` (fork, junction, start) keep the theme's colours:
+   state diagrams draw the same elements solid. */
+.node > :is(rect:not(.text), .label-container),
+.node > :is(g.label-container, g.outer-path, g.text) :is(path, circle, ellipse, rect, line) {
   fill: var(--fill) !important; stroke: var(--stroke) !important; stroke-width: 1.5px !important;
   stroke-dasharray: var(--dash) !important;
 }
+/* The inner disc of a stop or end-state marker stays solid. */
+.node > g.outer-path:not(.label-container) > g > path { fill: var(--stroke) !important; }
 .node > rect { rx: 8px; ry: 8px; }
 .node > :is(rect, .label-container) { filter: drop-shadow(0 2px 3px var(--shadow)); }
 .node .nodeLabel p { color: var(--muted) !important; }

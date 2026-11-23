@@ -124,8 +124,11 @@ edge's path, so the same CSS colours arrows by role.
 dotted canvas, a monospace font stack, roomy spacing, colour per role class (`actor app sec data
 ext danger`) and a status class (`new later planned`) that replaces the role colour with its own
 and dashes the border. Nodes take a role or status with `class id role`, named edges with
-`class edgeId role`. `sequence.mirrorActors: false` omits bottom participant copies that
-have no IDs for role styling. `--config` overrides the preset, and frontmatter overrides both.
+`class edgeId role`. Every node shape takes the colour except plain `text`, which stays
+borderless, and the start, stop, junction and fork markers (`sm-circ`, `fr-circ`, `f-circ`,
+`fork`), which keep the theme's.
+`sequence.mirrorActors: false` omits bottom participant copies that have no IDs for role
+styling. `--config` overrides the preset, and frontmatter overrides both.
 Their `themeCSS` adds to the preset's. The preset pins the theme, so `--theme` and `--dark-theme`
 are ignored with a warning: its dark mode follows the reader's colour scheme, in the HTML viewer
 too, where the theme button switches only the page around the diagram. A source draws a key of
