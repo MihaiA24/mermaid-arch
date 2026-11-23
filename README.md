@@ -161,6 +161,8 @@ failure leaves its previous outputs untouched; other sources in the batch still 
 files are staged beside their destinations and each replacement is atomic. Several files are
 not a filesystem transaction: an I/O failure during replacement can leave a partially updated
 set. Exit codes: `0` success (warnings allowed), `1` rendering failure, `2` invalid invocation.
+In a batch, an `options/ignored` warning appears once per engine, on the first source that
+could be read; `--watch` repeats it on every rebuild.
 
 On one machine a source renders to the same bytes every time: Mermaid's random ids are seeded
 and PDFs carry no timestamps. `render --verify` relies on that: it renders in memory, writes

@@ -86,6 +86,34 @@ def test_kept_page_that_hung_is_replaced(browser_session) -> None:
 
 
 @pytest.mark.browser
+@pytest.mark.parametrize("kind", ["canvas", "kept_page"])
+def test_replacing_a_closed_tab_closes_its_context(browser_session, kind: str) -> None:
+    def use_page():
+        if kind == "canvas":
+            return browser_session.canvas("white")
+        return browser_session.kept_page({"/": "<!doctype html>"}, script="")
+
+    with use_page() as page:
+        context = page.context
+        browser = context.browser
+    page.close()
+
+    with use_page() as replacement:
+        assert replacement.context is not context
+        assert context not in browser.contexts
+
+
+@pytest.mark.browser
+def test_canvas_releases_the_svg_after_rendering(browser_session) -> None:
+    with browser_session.canvas("white") as page:
+        assert not page.is_closed()
+
+    png = svg_to_png(browser_session, SVG)
+    assert page.locator("body > *").count() == 0
+    assert svg_to_png(browser_session, SVG) == png
+
+
+@pytest.mark.browser
 def test_pdf_bytes_do_not_depend_on_the_time(browser_session) -> None:
     first = svg_to_pdf(browser_session, SVG)
     time.sleep(1.05 - time.time() % 1)  # into the next second of the PDF's timestamp clock

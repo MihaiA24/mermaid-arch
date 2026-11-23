@@ -93,18 +93,24 @@ def render_source(
     *,
     title: str | None = None,
     verify: bool = False,
+    warned_engines: set[Engine] | None = None,
 ) -> Result:
     """Render, check and convert `source` before replacing output files individually.
 
     Empty `targets` only checks. Compile/check/conversion errors preserve all previous outputs.
     `verify` writes nothing and instead reports each target that differs from its payload.
+    Share `warned_engines` within a batch with fixed options and output formats to report
+    ignored options once per engine.
     """
     diagnostics: list[Diagnostic] = []
     engine = source.engine
     try:
         text = _text(source)
         engine = engine or engine_for(source.path)
-        diagnostics += _ignored_options(engine, options, targets)
+        if warned_engines is None or engine not in warned_engines:
+            diagnostics += _ignored_options(engine, options, targets)
+            if warned_engines is not None:
+                warned_engines.add(engine)
         main = _render(engine, source, text, options, session)
         diagnostics += main.warnings
         diagnostics += check_svg(main.svg)
@@ -399,6 +405,9 @@ def _viewer_variants(
             for theme in dict.fromkeys((light_id, dark_id))
         }
         return svgs[light_id], svgs[dark_id]
+    config = options.mermaid_config
+    if options.preset or (config is not None and "theme" in config):
+        return main.svg, main.svg
     dark = _render_mermaid(source, text, options, session, theme=options.dark_theme or "dark").svg
     return main.svg, dark
 

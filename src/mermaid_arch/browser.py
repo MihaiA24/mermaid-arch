@@ -160,12 +160,12 @@ class BrowserSession:
     def canvas(self, background: str) -> Iterator[Page]:
         """A blank page with `background` behind it, in a tab kept from call to call.
 
-        Callers replace the body and set the viewport they need. A call that raises closes
-        the tab, and the next call opens another.
+        Callers replace the body and set the viewport they need. The body is emptied after
+        each use. A call that raises closes the tab, and the next call opens another.
         """
         page = self._canvas
         if page is None or page.is_closed():
-            self._canvas = None
+            self._drop_canvas()
             page = self._open(lambda route: _serve(route, {"/": _CANVAS}))
             self._canvas = page
         try:
@@ -173,11 +173,19 @@ class BrowserSession:
                 page.goto(INTERNAL_ORIGIN + "/")
             page.evaluate(_SET_BACKGROUND, background)
             yield page
+            if page.is_closed():
+                self._drop_canvas()
+            else:
+                page.evaluate("document.body.replaceChildren()")
         except BaseException:
-            self._canvas = None
+            self._drop_canvas()
+            raise
+
+    def _drop_canvas(self) -> None:
+        page, self._canvas = self._canvas, None
+        if page is not None:
             with suppress(PlaywrightError):
                 page.context.close()
-            raise
 
     def _open(
         self,
