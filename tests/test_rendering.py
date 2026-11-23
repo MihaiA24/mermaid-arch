@@ -4,6 +4,7 @@ import json
 import math
 import struct
 import xml.etree.ElementTree as ET
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -380,7 +381,7 @@ def test_top_level_font_family_overrides_archify(browser_session) -> None:
     assert family == "Georgia, serif"
 
 
-def _font(path: Path, family: str = "Test & Face") -> Path:
+def _font(path: Path, family: str = "Test & Face", *, italic: bool = False) -> Path:
     """A TrueType font, family `family`, with a wide square for every letter a to z."""
     letters = [chr(code) for code in range(ord("a"), ord("z") + 1)]
     names = [".notdef", *letters]
@@ -399,8 +400,10 @@ def _font(path: Path, family: str = "Test & Face") -> Path:
     builder.setupGlyf(glyphs)
     builder.setupHorizontalMetrics({name: (1000, 0) for name in names})
     builder.setupHorizontalHeader(ascent=800, descent=-200)
-    builder.setupNameTable({"familyName": family, "styleName": "Regular"})
-    builder.setupOS2()
+    if italic:
+        builder.font["head"].macStyle = 2
+    builder.setupNameTable({"familyName": family, "styleName": "Italic" if italic else "Regular"})
+    builder.setupOS2(fsSelection=int(italic))
     builder.setupPost()
     builder.save(path)
     return path
@@ -426,6 +429,71 @@ def test_font_lays_text_out_and_travels_inside_the_svg(
     unnamed = render_mermaid(browser_session, graph, font_files=[font])
     assert [warning.code for warning in unnamed.warnings] == ["mermaid/font-unused"]
     assert "@font-face" not in unnamed.svg
+
+    with browser_session.page({"/": '<!doctype html><meta charset="utf-8">'}) as page:
+        assert page.evaluate(
+            """async svg => {
+                const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml');
+                document.body.append(parsed.documentElement);
+                const label = document.querySelector('.nodeLabel');
+                const range = new Range();
+                range.selectNodeContents(label);
+                await document.fonts.ready;
+                return {
+                    faces: [...document.fonts].map(face => face.status),
+                    widthInEms: range.getBoundingClientRect().width /
+                                parseFloat(getComputedStyle(label).fontSize),
+                };
+            }""",
+            first.svg,
+        ) == {"faces": ["loaded"], "widthInEms": 26}
+
+
+def test_font_gone_after_parsing_is_a_diagnostic(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.ttf"
+    with BrowserSession() as session, pytest.raises(DiagramError) as caught:
+        render_mermaid(session, "flowchart LR\n a --> b", font_files=[missing])
+    [diagnostic] = caught.value.diagnostics
+    assert diagnostic.code == "mermaid/font-unreadable"
+
+
+@pytest.mark.browser
+def test_font_bytes_are_snapshotted_before_layout(
+    browser_session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    font = _font(tmp_path / "regular.ttf")
+    replacement = _font(tmp_path / "replacement.ttf", "Replacement").read_bytes()
+    graph = "flowchart LR\n a[abcdefghijklmnopqrstuvwxyz] --> b[label]"
+    config = {"fontFamily": '"Test & Face"'}
+    first = render_mermaid(browser_session, graph, config=config, font_files=[font])
+    kept_page = browser_session.kept_page
+
+    @contextmanager
+    def replace_font(files, *, script):
+        font.write_bytes(replacement)
+        with kept_page(files, script=script) as page:
+            yield page
+
+    monkeypatch.setattr(browser_session, "kept_page", replace_font)
+    assert render_mermaid(browser_session, graph, config=config, font_files=[font]) == first
+
+
+@pytest.mark.browser
+def test_unused_italic_is_not_embedded(browser_session, tmp_path: Path) -> None:
+    regular = _font(tmp_path / "regular.ttf")
+    italic = _font(tmp_path / "italic.ttf", italic=True)
+    graph = "flowchart LR\n a[abcdefghijklmnopqrstuvwxyz] --> b[label]"
+    config = {"fontFamily": '"Test & Face"'}
+    first = render_mermaid(browser_session, graph, config=config, font_files=[regular])
+    both = render_mermaid(browser_session, graph, config=config, font_files=[regular, italic])
+    assert both.svg == first.svg
+    [diagnostic] = both.warnings
+    assert diagnostic.code == "mermaid/font-unused"
+    assert "italic.ttf" in diagnostic.message
+
+    styled = {**config, "themeCSS": ".nodeLabel { font-style: italic; }"}
+    result = render_mermaid(browser_session, graph, config=styled, font_files=[regular, italic])
+    assert ";font-style:italic;unicode-range:" in result.svg
 
 
 @pytest.mark.browser

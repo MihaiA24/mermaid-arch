@@ -183,6 +183,16 @@ _RENDER = r"""args => {
       const text = [...root.querySelectorAll('text, foreignObject')]
         .map(element => element.textContent).join('');
       const serialized = new XMLSerializer().serializeToString(root);
+      const sheet = document.head.querySelector('style');
+      let usedFaces = [];
+      if (sheet.textContent) {
+        // Reset the eagerly loaded faces so only this SVG's layout can load them again.
+        const previous = new Set(document.fonts);
+        sheet.textContent = sheet.textContent;
+        const supplied = [...document.fonts].filter(face => !previous.has(face));
+        await document.fonts.ready;
+        usedFaces = supplied.map(face => face.status === 'loaded');
+      }
       // Mark one text element per font stack, after serializing: Python asks Chromium which
       // installed fonts drew each one.
       const stacks = new Set();
@@ -197,7 +207,7 @@ _RENDER = r"""args => {
       }
       return {
         ok: true, svg: serialized, layout, themeCSS: effective.themeCSS ?? null,
-        unusedRoles, text, stacks: [...stacks]
+        unusedRoles, text, stacks: [...stacks], usedFaces
       };
     } catch (e) {
       return {ok: false, message: String(e.message || e), line: e.hash?.loc?.first_line};
@@ -420,18 +430,18 @@ def render_mermaid(
 
     problems: list[Diagnostic] = []
     routes: dict[str, bytes | str | Path] = {}
-    faces: list[tuple[Path, str, str, str]] = []
+    faces: list[tuple[Path, bytes, str, str, str]] = []
     declared: list[str] = []
     for path in font_files:
         try:
-            face = read_font(path)
+            data, face = read_font(path)
         except ValueError as exc:
             problems.append(error("mermaid/font-unreadable", f"cannot read {path}: {exc}"))
             continue
         url = f"/fonts/{len(faces)}{path.suffix.lower()}"
-        routes[url] = path
+        routes[url] = data
         declared.append(_font_face(*face, f'src:url("{url}")'))
-        faces.append((path, *face))
+        faces.append((path, data, *face))
     routes["/"] = _HTML.format(faces="".join(declared))
     modified: dict[str, int | None] = {}
     for name, uses in references.items():
@@ -570,18 +580,26 @@ def render_mermaid(
         for family in stack.split(",")
     }
     embedded: list[str] = []
-    for path, family, weight, style in faces:
-        if family.lower() not in named:
+    for (path, data, family, weight, style), used in zip(faces, result["usedFaces"], strict=True):
+        if used and result["text"]:
+            embedded.append(_embedded_face(data, family, weight, style, result["text"]))
+        elif family.lower() not in named:
             diagnostics.append(
                 warning(
                     "mermaid/font-unused",
                     f"no text names font family {family!r}, so {path} is not embedded",
-                    hint=f'start fontFamily and themeVariables.fontFamily with "{family}" '
-                    "in the --config file or frontmatter",
+                    hint=f'start fontFamily with "{family}" in the --config file or frontmatter; '
+                    "if themeVariables.fontFamily is set, update it too",
                 )
             )
-        elif result["text"]:
-            embedded.append(_embedded_face(path, family, weight, style, result["text"]))
+        else:
+            diagnostics.append(
+                warning(
+                    "mermaid/font-unused",
+                    f"no text uses {path} ({family!r}, weight {weight}, {style}), "
+                    "so it is not embedded",
+                )
+            )
     if embedded:
         # The root element is the first line; the faces go before Mermaid's own <style>.
         head, _, rest = svg.partition("\n")
@@ -614,10 +632,11 @@ def merge_config(base: Mapping[str, object], over: Mapping[str, object]) -> dict
     return merged
 
 
-def read_font(path: Path) -> tuple[str, str, str]:
-    """CSS font-family, font-weight and font-style of the font file at `path`."""
+def read_font(path: Path) -> tuple[bytes, tuple[str, str, str]]:
+    """Read the font bytes and its CSS font-family, font-weight and font-style."""
     try:
-        with TTFont(path, lazy=True) as font:
+        data = path.read_bytes()
+        with TTFont(io.BytesIO(data), lazy=True) as font:
             family = font["name"].getBestFamilyName()
             os2 = font["OS/2"]
             axes = {axis.axisTag: axis for axis in font["fvar"].axes} if "fvar" in font else {}
@@ -633,7 +652,7 @@ def read_font(path: Path) -> tuple[str, str, str]:
         raise ValueError(f"not a single TTF, OTF, WOFF or WOFF2 font ({exc})") from None
     if not family:
         raise ValueError("the font names no family")
-    return family, weight, style
+    return data, (family, weight, style)
 
 
 def _font_face(family: str, weight: str, style: str, source: str) -> str:
@@ -643,15 +662,16 @@ def _font_face(family: str, weight: str, style: str, source: str) -> str:
     return f'@font-face{{font-family:"{name}";font-weight:{weight};font-style:{style};{source}}}'
 
 
-def _embedded_face(path: Path, family: str, weight: str, style: str, text: str) -> str:
-    """An @font-face carrying the glyphs of `text` from `path` as WOFF2."""
-    font = TTFont(path, recalcTimestamp=False)  # a fresh timestamp would change every render
+def _embedded_face(body: bytes, family: str, weight: str, style: str, text: str) -> str:
+    """An @font-face carrying the glyphs of `text` from the supplied font bytes as WOFF2."""
     subsetter = subset.Subsetter(subset.Options())
     subsetter.populate(text=text)
-    subsetter.subset(font)
-    font.flavor = "woff2"
+    # A fresh timestamp would change every render.
     data = io.BytesIO()
-    font.save(data)
+    with TTFont(io.BytesIO(body), recalcTimestamp=False) as font:
+        subsetter.subset(font)
+        font.flavor = "woff2"
+        font.save(data)
     codes = sorted({ord(char) for char in text})
     runs: list[list[int]] = []
     for code in codes:
