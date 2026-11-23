@@ -64,7 +64,7 @@ BUNDLED_THEMES = (
 FONT_AWESOME_PACKS = {"fas": "fa6-solid", "far": "fa6-regular", "fab": "fa6-brands"}
 _ICON = re.compile(
     r"""(?:^|[{,])\s*icon\s*:\s*["']?(?P<shape>[a-z0-9-]+:[a-z0-9-]+)"""
-    r"|^\s*(?:service|group)\s+[\w-]+\((?P<arch>[a-z0-9-]+:[a-z0-9-]+)\)"
+    r"|^\s*(?:service|group)\s+[\w-]+\s*\((?P<arch>[a-z0-9-]+:[a-z0-9-]+)\)"
     r"|\b(?P<label>fa[bklrs]?:fa-[\w-]+)"
 )
 # Node shape data, `id@{ ... }`, the only place an `icon:` key means an icon. A brace inside
@@ -151,9 +151,9 @@ _RENDER = r"""args => {
         return {ok: false, limit};
       }
       // Iconify randomizes gradient/clip IDs independently of Mermaid's deterministic seed.
-      // Canonicalize only those IDs and their references, preserving the authored geometry.
+      // Use stable diagram-scoped IDs so inlined diagrams cannot share paint servers.
       const ids = new Map([...root.querySelectorAll('[id^="IconifyId"]')]
-        .map((element, index) => [element.id, `iconify-${index}`]));
+        .map((element, index) => [element.id, `${root.id}_iconify-${index}`]));
       const canonical = value => value.replace(/IconifyId[0-9a-zA-Z_-]+/g, k => ids.get(k) || k);
       for (const element of root.querySelectorAll('*')) {
         for (const attribute of [...element.attributes]) {
@@ -204,14 +204,17 @@ _RENDER = r"""args => {
     }
   }
 
-  // Mermaid paints every label icon in the text colour; give each path its own fill back.
+  // Mermaid's label-icon CSS overrides presentation attributes; restore the authored paint.
   function keepIconColours(root) {
+    const properties = ['fill', 'stroke', 'stroke-width'];
     for (const path of root.querySelectorAll('svg.label-icon path')) {
-      const painted = path.closest('[fill]');
-      const fill = painted?.getAttribute('fill');
-      if (fill && fill.toLowerCase() !== 'currentcolor'
-          && path.closest('svg.label-icon').contains(painted)) {
-        path.style.fill = fill;
+      const icon = path.closest('svg.label-icon');
+      for (const name of properties) {
+        const painted = path.closest(`[${name}]`);
+        const value = painted?.getAttribute(name);
+        if (value && value.toLowerCase() !== 'currentcolor' && icon.contains(painted)) {
+          path.style.setProperty(name, value);
+        }
       }
     }
   }

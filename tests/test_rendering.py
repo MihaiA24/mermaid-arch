@@ -82,9 +82,17 @@ def icons(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                         "body": (
                             '<defs><linearGradient id="paint"><stop stop-color="red"/>'
                             '<stop offset="1" stop-color="blue"/></linearGradient></defs>'
+                            '<path fill="url(#paint)" stroke="#0a7" stroke-width="3" '
+                            'd="M2 2h20v20H2z"/>'
+                        )
+                    },
+                    "store": {
+                        "body": (
+                            '<defs><linearGradient id="paint"><stop stop-color="green"/>'
+                            '<stop offset="1" stop-color="yellow"/></linearGradient></defs>'
                             '<path fill="url(#paint)" d="M2 2h20v20H2z"/>'
                         )
-                    }
+                    },
                 },
                 "aliases": {"person": {"parent": "account"}, "member": {"parent": "person"}},
             }
@@ -115,15 +123,56 @@ def test_unknown_icon_is_rejected_with_line_and_suggestion(
 def test_label_icon_keeps_its_colours_unless_monochrome(browser_session, icons) -> None:
     source = 'flowchart TB\n a["fas:fa-member Customer"]'  # member -> person -> account
 
-    def icon_path(**options) -> ET.Element:
+    def paint(**options) -> dict[str, str]:
         svg = render_mermaid(browser_session, source, icon_packs={"fas": "test"}, **options).svg
-        [icon] = [e for e in ET.fromstring(svg).iter() if e.get("class") == "label-icon"]
-        return next(e for e in icon.iter() if e.get("d"))
+        with browser_session.page({"/": "<!doctype html>" + svg}) as page:
+            path = page.locator("svg.label-icon path")
+            assert path.get_attribute("d") == "M2 2h20v20H2z"
+            return path.evaluate("""path => {
+                const {color, fill, stroke, strokeWidth} = getComputedStyle(path);
+                return {color, fill, stroke, strokeWidth};
+            }""")
 
-    coloured = icon_path()
-    assert coloured.get("d") == "M2 2h20v20H2z"
-    assert "url(" in coloured.get("style", "")
-    assert "style" not in icon_path(monochrome_icons=True).attrib
+    coloured = paint()
+    assert coloured["stroke"] == "rgb(0, 170, 119)"
+    assert coloured["strokeWidth"] == "3px"
+    monochrome = paint(monochrome_icons=True)
+    assert monochrome["fill"] == monochrome["stroke"] == monochrome["color"]
+
+
+@pytest.mark.browser
+def test_inlined_label_icons_use_their_own_gradients(browser_session, icons) -> None:
+    customer = render_mermaid(
+        browser_session,
+        'flowchart TB\n a["fas:fa-account Customer"]',
+        icon_packs={"fas": "test"},
+        svg_id="customer",
+    ).svg
+    store = render_mermaid(
+        browser_session,
+        'flowchart TB\n b["fas:fa-store Store"]',
+        icon_packs={"fas": "test"},
+        svg_id="store",
+    ).svg
+    with browser_session.page({"/": "<!doctype html>" + customer + store}) as page:
+        gradients = page.locator("svg.label-icon path").evaluate_all(r"""
+            paths => paths.map(path => {
+                const id = getComputedStyle(path).fill.match(/^url\("#([^"]+)"\)$/)?.[1];
+                const gradient = document.getElementById(id ?? '');
+                return [
+                    path.closest('body > svg').contains(gradient),
+                    gradient?.querySelector('stop')?.getAttribute('stop-color')
+                ];
+            })
+        """)
+    assert gradients == [[True, "red"], [True, "green"]]
+
+
+@pytest.mark.browser
+def test_architecture_icon_after_space(browser_session, icons) -> None:
+    source = "architecture-beta\n service db (test:account)[Database]"
+    root = ET.fromstring(render_mermaid(browser_session, source).svg)
+    assert any(element.get("d") == "M2 2h20v20H2z" for element in root.iter())
 
 
 @pytest.mark.browser
