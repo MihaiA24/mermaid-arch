@@ -68,8 +68,9 @@ _ICON = re.compile(
     r"|\b(?P<label>fa[bklrs]?:fa-[\w-]+)"
 )
 # Node shape data, `id@{ ... }`, the only place an `icon:` key means an icon. A brace inside
-# one of its quoted strings does not close it.
+# one of its quoted strings does not close it, and an `icon:` inside one is label text.
 _SHAPE_DATA = re.compile(r"""@\{(?:"[^"]*"|'[^']*'|[^"'}])*\}""")
+_QUOTED = re.compile(r""""[^"]*"|'[^']*'""")
 _FRONTMATTER = re.compile(r"\A\s*---[^\S\n]*\n.*?\n---[^\S\n]*(?:\n|$)", re.S)
 _DIRECTIVE = re.compile(r"%%\{.*?\}%%", re.S)
 _COMMENT = re.compile(r"^[ \t]*%%[^\n]*(?:\n|$)", re.M)
@@ -214,16 +215,17 @@ _RENDER = r"""args => {
     }
   }
 
-  // Mermaid's label-icon CSS overrides presentation attributes; restore the authored paint.
+  // Mermaid's `.node circle, .node rect…` rules repaint label-icon artwork, and its label-icon
+  // rule resets paths only. Restore the authored paint; unpainted shapes get the path rule's.
   function keepIconColours(root) {
-    const properties = ['fill', 'stroke', 'stroke-width'];
-    for (const path of root.querySelectorAll('svg.label-icon path')) {
-      const icon = path.closest('svg.label-icon');
-      for (const name of properties) {
-        const painted = path.closest(`[${name}]`);
-        const value = painted?.getAttribute(name);
-        if (value && value.toLowerCase() !== 'currentcolor' && icon.contains(painted)) {
-          path.style.setProperty(name, value);
+    const unpainted = {fill: 'currentColor', stroke: 'none', 'stroke-width': '1'};
+    const shapes = 'path, circle, ellipse, rect, polygon, polyline, line';
+    for (const icon of root.querySelectorAll('svg.label-icon')) {
+      for (const shape of icon.querySelectorAll(shapes)) {
+        for (const [name, initial] of Object.entries(unpainted)) {
+          const painted = shape.closest(`[${name}]`);
+          const value = icon.contains(painted) ? painted.getAttribute(name) : initial;
+          if (shape.tagName !== 'path' || value !== initial) shape.style.setProperty(name, value);
         }
       }
     }
@@ -413,6 +415,7 @@ def render_mermaid(
     served = {**FONT_AWESOME_PACKS, **(icon_packs or {})}
     references: dict[str, list[tuple[str, str, int]]] = {}
     shape_data = [match.span() for match in _SHAPE_DATA.finditer(source)]
+    quoted = [q.span() for a, b in shape_data for q in _QUOTED.finditer(source, a, b)]
     end = 0
     for number, line in enumerate(source.splitlines(keepends=True), 1):
         start, end = end, end + len(line)
@@ -420,7 +423,9 @@ def render_mermaid(
             continue
         for match in _ICON.finditer(line):
             at = start + match.start()
-            if match["shape"] and not any(a < at < b for a, b in shape_data):
+            if match["shape"] and (
+                not any(a < at < b for a, b in shape_data) or any(a < at < b for a, b in quoted)
+            ):
                 continue  # `, icon: x:y` in label text is words
             written = match["shape"] or match["arch"] or match["label"]
             name, icon = written.split(":", 1)

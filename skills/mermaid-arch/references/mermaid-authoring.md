@@ -54,7 +54,7 @@
   icon name. `fa` draws Font Awesome 4; `fas`, `far` and `fab` draw Font Awesome 6 solid,
   regular and brands. `--icon-pack fas=mdi` serves another Iconify pack under that name, so
   `fas:fa-account` draws `mdi:account`. Label icons keep their own colours, so a brand logo
-  stays recognisable; a path without a colour follows the label text. `--monochrome-icons`
+  stays recognisable; a shape without a colour follows the label text. `--monochrome-icons`
   draws every label icon in the text colour.
 - **Icon labels.** If labels have unwanted grey rectangles, put this in `config.themeCSS`:
 
