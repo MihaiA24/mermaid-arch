@@ -100,6 +100,8 @@ def icons(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                         "body": (
                             '<circle cx="12" cy="12" r="10" fill="#e11d48"/>'
                             '<rect x="8" y="8" width="8" height="8"/>'
+                            '<g stroke="#0a7" stroke-width="2">'
+                            '<path stroke="none" d="M2 2h4v4H2z"/><path d="M18 2h4v4h-4z"/></g>'
                         )
                     },
                 },
@@ -150,18 +152,22 @@ def test_label_icon_keeps_its_colours_unless_monochrome(browser_session, icons) 
 
 
 @pytest.mark.browser
-def test_label_icon_shapes_besides_paths_keep_their_colours(browser_session, icons) -> None:
+def test_label_icon_shapes_keep_their_authored_paint(browser_session, icons) -> None:
     source = 'flowchart TB\n a["fas:fa-badge Badge"]'
     svg = render_mermaid(browser_session, source, icon_packs={"fas": "test"}).svg
     with browser_session.page({"/": "<!doctype html>" + svg}) as page:
-        circle, rect = page.locator("svg.label-icon :is(circle, rect)").evaluate_all(
+        circle, rect, bare, stroked = page.locator(
+            "svg.label-icon :is(circle, rect, path)"
+        ).evaluate_all(
             """shapes => shapes.map(shape => {
-                const {color, fill, stroke} = getComputedStyle(shape);
-                return {color, fill, stroke};
+                const {color, fill, stroke, strokeWidth} = getComputedStyle(shape);
+                return {color, fill, stroke, strokeWidth};
             })"""
         )
     assert (circle["fill"], circle["stroke"]) == ("rgb(225, 29, 72)", "none")
-    assert (rect["fill"], rect["stroke"]) == (rect["color"], "none")  # unpainted: like a path
+    assert (rect["fill"], rect["stroke"]) == (rect["color"], "none")  # unpainted
+    assert bare["stroke"] == "none"  # its own `stroke="none"` beats the group's
+    assert (stroked["stroke"], stroked["strokeWidth"]) == ("rgb(0, 170, 119)", "2px")
 
 
 @pytest.mark.browser

@@ -215,17 +215,17 @@ _RENDER = r"""args => {
     }
   }
 
-  // Mermaid's `.node circle, .node rect…` rules repaint label-icon artwork, and its label-icon
-  // rule resets paths only. Restore the authored paint; unpainted shapes get the path rule's.
+  // Mermaid's `.node circle, .node rect…` and neo `.node path` rules repaint label-icon
+  // artwork. Restore the authored paint, or SVG's initial paint where none is authored.
   function keepIconColours(root) {
-    const unpainted = {fill: 'currentColor', stroke: 'none', 'stroke-width': '1'};
+    const initial = {fill: 'currentColor', stroke: 'none', 'stroke-width': '1'};
     const shapes = 'path, circle, ellipse, rect, polygon, polyline, line';
     for (const icon of root.querySelectorAll('svg.label-icon')) {
       for (const shape of icon.querySelectorAll(shapes)) {
-        for (const [name, initial] of Object.entries(unpainted)) {
+        for (const [name, unpainted] of Object.entries(initial)) {
           const painted = shape.closest(`[${name}]`);
-          const value = icon.contains(painted) ? painted.getAttribute(name) : initial;
-          if (shape.tagName !== 'path' || value !== initial) shape.style.setProperty(name, value);
+          const value = icon.contains(painted) ? painted.getAttribute(name) : unpainted;
+          shape.style.setProperty(name, value);
         }
       }
     }
