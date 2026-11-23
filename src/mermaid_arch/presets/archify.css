@@ -38,7 +38,7 @@
   .node .label text, .cluster-label text, .edgeLabel text { fill: var(--muted) !important; }
   .edgeLabel rect.background { fill: var(--bg) !important; }
   /* Dark brand logos need a light chip; single-colour icons use currentColor. */
-  .label-icon:not(:has([fill="currentColor"])) {
+  .label-icon:not(:has([fill="currentColor"], [stroke="currentColor"])) {
     background: #e2e8f0; border-radius: 3px; box-shadow: 0 0 0 2px #e2e8f0;
   }
 }
@@ -67,7 +67,7 @@
 .node .nodeLabel p { color: var(--muted) !important; }
 .node .nodeLabel b { color: var(--text); }
 .node .label-icon { color: var(--stroke); }
-.node .label-icon:not(:has([fill="currentColor"])) { color: #000; }
+.node .label-icon:not(:has([fill="currentColor"], [stroke="currentColor"])) { color: #000; }
 .cluster > rect {
   fill: var(--lane-fill) !important; stroke: var(--lane-stroke) !important;
   stroke-width: 1.2px !important; stroke-dasharray: var(--dash); rx: 12px; ry: 12px;
