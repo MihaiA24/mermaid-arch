@@ -12,7 +12,7 @@ from fontTools.pens.ttGlyphPen import TTGlyphPen
 
 from mermaid_arch.browser import BrowserSession, svg_to_pdf, svg_to_png
 from mermaid_arch.checks import check_svg, svg_size
-from mermaid_arch.mermaid import merge_config, render_mermaid
+from mermaid_arch.mermaid import load_preset, merge_config, render_mermaid
 from mermaid_arch.models import DiagramError, Engine, RenderOptions, Source
 from mermaid_arch.pipeline import Result, render_source
 
@@ -315,6 +315,27 @@ def test_malformed_legend_entry_is_rejected_with_its_line() -> None:
     assert (diagnostic.code, diagnostic.line) == ("mermaid/legend", 2)
 
 
+@pytest.mark.parametrize(
+    ("directive", "first", "second"),
+    [("legend", "app Service", "Store"), ("legend-arrows", "main path", "secondary path")],
+)
+def test_duplicate_legend_directive_is_rejected_with_its_line(
+    directive: str, first: str, second: str
+) -> None:
+    source = f"flowchart LR\n a --> b\n %% {directive}: {first}\n %% {directive}: {second}"
+    with BrowserSession() as session, pytest.raises(DiagramError) as caught:
+        render_mermaid(session, source)
+    [diagnostic] = caught.value.diagnostics
+    assert (diagnostic.code, diagnostic.line) == ("mermaid/legend", 4)
+    assert diagnostic.hint == f"keep all entries in one `%% {directive}:` directive"
+
+
+@pytest.mark.parametrize("name", ["unknown", "../archify"])
+def test_load_preset_rejects_names_outside_the_bundled_choices(name: str) -> None:
+    with pytest.raises(ValueError, match="choose from: archify"):
+        load_preset(name)
+
+
 def test_config_merges_over_a_preset_key_by_key() -> None:
     preset = {"flowchart": {"padding": 20, "nodeSpacing": 64}, "themeCSS": ".a {}"}
     config = {"flowchart": {"padding": 8}, "themeCSS": ".b {}", "theme": "dark"}
@@ -323,6 +344,40 @@ def test_config_merges_over_a_preset_key_by_key() -> None:
         "themeCSS": ".a {}\n.b {}",
         "theme": "dark",
     }
+
+
+@pytest.mark.browser
+@pytest.mark.parametrize(
+    ("source", "box_fill", "label_count"),
+    [
+        ("flowchart LR\n a[Service]\n class a app", "rgb(28, 45, 70)", 1),
+        ("classDiagram\n class Service {\n +name\n +launch()\n }", "rgb(30, 41, 59)", 3),
+    ],
+)
+def test_archify_svg_node_labels_contrast_with_dark_boxes(
+    browser_session, source: str, box_fill: str, label_count: int
+) -> None:
+    result = render_mermaid(browser_session, source, config={"htmlLabels": False}, preset="archify")
+    with browser_session.page({"/": f"<!doctype html>{result.svg}"}, color_scheme="dark") as page:
+        fills = page.locator(".node > .label-container, .node text .text-inner-tspan").evaluate_all(
+            "elements => elements.map(element => getComputedStyle(element).fill)"
+        )
+    assert fills == [box_fill] + ["rgb(203, 213, 225)"] * label_count
+
+
+@pytest.mark.browser
+def test_top_level_font_family_overrides_archify(browser_session) -> None:
+    result = render_mermaid(
+        browser_session,
+        "flowchart LR\n a[Service]",
+        config={"fontFamily": "Georgia, serif"},
+        preset="archify",
+    )
+    with browser_session.page({"/": f"<!doctype html>{result.svg}"}) as page:
+        family = page.locator(".nodeLabel p").evaluate(
+            "label => getComputedStyle(label).fontFamily"
+        )
+    assert family == "Georgia, serif"
 
 
 def _font(path: Path, family: str = "Test & Face") -> Path:

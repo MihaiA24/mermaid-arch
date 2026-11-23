@@ -124,11 +124,12 @@ edge's path, so the same CSS colours arrows by role.
 dotted canvas, a monospace font stack, roomy spacing, colour per role class (`actor app sec data
 ext danger`) and a status class (`new later planned`) that replaces the role colour with its own
 and dashes the border. Nodes take a role or status with `class id role`, named edges with
-`class edgeId role`. It sits under `--config`, which sits under frontmatter; their `themeCSS`
-adds to the preset's. The preset pins the theme, so `--theme` and `--dark-theme` are ignored
-with a warning: its dark mode follows the reader's colour scheme, in the HTML viewer too, where
-the theme button switches only the page around the diagram. A source draws a key of role
-colours with `%% legend: app Service | data Store` and one line under it with
+`class edgeId role`. `sequence.mirrorActors: false` omits bottom participant copies that
+have no IDs for role styling. `--config` overrides the preset, and frontmatter overrides both.
+Their `themeCSS` adds to the preset's. The preset pins the theme, so `--theme` and `--dark-theme`
+are ignored with a warning: its dark mode follows the reader's colour scheme, in the HTML viewer
+too, where the theme button switches only the page around the diagram. A source draws a key of
+role colours with `%% legend: app Service | data Store` and one line under it with
 `%% legend-arrows: TEXT`; `render --help` lists these directives.
 
 `--icon-pack NAME=PREFIX[@X.Y.Z]` serves an Iconify pack under another name. Mermaid draws
@@ -141,8 +142,9 @@ in the text colour, Mermaid's default.
 Text is laid out with the fonts installed on the rendering machine. `--font FILE`, once per
 weight or style, lays it out with that TTF, OTF, WOFF or WOFF2 file instead, and embeds a
 WOFF2 subset of the glyphs used in the SVG, so it looks the same where the font is not
-installed. The config's `fontFamily` and `themeVariables.fontFamily` must name the font's
-family; a font no text uses is reported as `mermaid/font-unused`.
+installed. Name the font's family in `fontFamily`. If you set `themeVariables.fontFamily`,
+it takes precedence, so name the family there too. A font file Chromium does not use is
+reported as `mermaid/font-unused` and left out of the SVG.
 
 ### Checked delivery
 

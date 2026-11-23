@@ -4,7 +4,6 @@
   "fontFamily": "\"JetBrains Mono\", ui-monospace, SFMono-Regular, Menlo, Consolas, \"DejaVu Sans Mono\", monospace",
   "fontSize": 14,
   "themeVariables": {
-    "fontFamily": "\"JetBrains Mono\", ui-monospace, SFMono-Regular, Menlo, Consolas, \"DejaVu Sans Mono\", monospace",
     "fontSize": "14px"
   },
   "flowchart": {
