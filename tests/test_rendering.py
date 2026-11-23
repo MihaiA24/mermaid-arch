@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import struct
 import xml.etree.ElementTree as ET
 from contextlib import contextmanager
+from importlib.resources import files
 from pathlib import Path
 
 import pytest
@@ -364,6 +366,35 @@ def test_archify_svg_node_labels_contrast_with_dark_boxes(
             "elements => elements.map(element => getComputedStyle(element).fill)"
         )
     assert fills == [box_fill] + ["rgb(203, 213, 225)"] * label_count
+
+
+@pytest.mark.browser
+def test_archify_colours_every_node_shape_but_markers_and_text(browser_session) -> None:
+    bundle = (files("mermaid_arch") / "assets" / "mermaid.min.js").read_text(encoding="utf-8")
+    # Start, stop, junction and fork: Mermaid drops their class or paints them inline.
+    # Plain text has no outline.
+    unboxed = {"sm-circ", "fr-circ", "f-circ", "fork", "text"}
+    shapes = sorted(set(re.findall(r'shortName:"([\w-]+)"', bundle)) - unboxed)
+    assert len(shapes) > 40
+    nodes = "".join(f" n{index}@{{ shape: {shape} }}\n" for index, shape in enumerate(shapes))
+    roles = ",".join(f"n{index}" for index in range(len(shapes)))
+    svg = render_mermaid(
+        browser_session, f"flowchart LR\n{nodes} class {roles} app", preset="archify"
+    ).svg
+    with browser_session.page({"/": f"<!doctype html>{svg}"}) as page:
+        paint = page.evaluate("""() => [...document.querySelectorAll(
+            '.node :is(path, circle, ellipse, rect, polygon, line)')]
+            .filter(shape => !shape.closest('.label'))
+            .map(shape => {
+                const {fill, stroke} = getComputedStyle(shape);
+                return [shape.closest('.node').id.split('-').at(-2), fill, stroke];
+            })""")
+    blue = "rgb(37, 99, 235)"
+    fills = {"rgb(239, 246, 255)", blue}  # cross-circ's cross shares the stop marker's solid disc
+    wrong = {
+        shapes[int(node[1:])] for node, fill, stroke in paint if stroke != blue or fill not in fills
+    }
+    assert wrong == set()
 
 
 @pytest.mark.browser
