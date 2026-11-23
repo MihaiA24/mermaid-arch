@@ -125,8 +125,10 @@ dotted canvas, a monospace font stack, roomy spacing, colour per role class (`ac
 ext danger`) and a status class (`new later planned`) that replaces the role colour with its own
 and dashes the border. Nodes take a role or status with `class id role`, named edges with
 `class edgeId role`. Every node shape takes the colour except plain `text`, which stays
-borderless, and the start, stop, junction and fork markers (`sm-circ`, `fr-circ`, `f-circ`,
-`fork`), which keep the theme's.
+borderless, and shapes Mermaid draws without the role class: icon and image shapes
+(`@{ icon: … }`, `@{ img: … }`) and the start, stop, junction and fork markers (`sm-circ`,
+`fr-circ`, `f-circ`, `fork`). The stop marker takes the preset's slate; the others keep the
+theme's colours.
 `sequence.mirrorActors: false` omits bottom participant copies that have no IDs for role
 styling. `--config` overrides the preset, and frontmatter overrides both.
 Their `themeCSS` adds to the preset's. The preset pins the theme, so `--theme` and `--dark-theme`
@@ -231,6 +233,8 @@ tracks these gaps:
 - `--watch` on a Markdown file repeats `options/ignored` once per diagram block on each rebuild.
 - Legend squares copy node colours at render time, so custom dark-mode CSS on nodes does not
   recolour them. `--preset archify` is not affected.
+- In dark mode under `--preset archify`, a state diagram's start dot and fork bar stay
+  near-black on the dark canvas, and ER attribute rows keep light fills under light text.
 
 ## Install the skill
 
