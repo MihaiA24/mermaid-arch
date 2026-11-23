@@ -96,6 +96,12 @@ def icons(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                             '<path fill="url(#paint)" d="M2 2h20v20H2z"/>'
                         )
                     },
+                    "badge": {
+                        "body": (
+                            '<circle cx="12" cy="12" r="10" fill="#e11d48"/>'
+                            '<rect x="8" y="8" width="8" height="8"/>'
+                        )
+                    },
                 },
                 "aliases": {"person": {"parent": "account"}, "member": {"parent": "person"}},
             }
@@ -144,6 +150,21 @@ def test_label_icon_keeps_its_colours_unless_monochrome(browser_session, icons) 
 
 
 @pytest.mark.browser
+def test_label_icon_shapes_besides_paths_keep_their_colours(browser_session, icons) -> None:
+    source = 'flowchart TB\n a["fas:fa-badge Badge"]'
+    svg = render_mermaid(browser_session, source, icon_packs={"fas": "test"}).svg
+    with browser_session.page({"/": "<!doctype html>" + svg}) as page:
+        circle, rect = page.locator("svg.label-icon :is(circle, rect)").evaluate_all(
+            """shapes => shapes.map(shape => {
+                const {color, fill, stroke} = getComputedStyle(shape);
+                return {color, fill, stroke};
+            })"""
+        )
+    assert (circle["fill"], circle["stroke"]) == ("rgb(225, 29, 72)", "none")
+    assert (rect["fill"], rect["stroke"]) == (rect["color"], "none")  # unpainted: like a path
+
+
+@pytest.mark.browser
 def test_inlined_label_icons_use_their_own_gradients(browser_session, icons) -> None:
     customer = render_mermaid(
         browser_session,
@@ -182,11 +203,13 @@ def test_architecture_icon_after_space(browser_session, icons) -> None:
 def test_label_text_is_not_an_icon(browser_session, icons) -> None:
     source = (
         'flowchart LR\n api["Graph API (localhost:5050)"] --> db["Neo4j (bolt:7687)"]\n'
-        ' web["Ports, icon: http:80"]'
+        ' web["Ports, icon: http:80"]\n'
+        ' note@{ shape: rect, label: "Note, icon: http:81" }'
     )
     svg = render_mermaid(browser_session, source).svg
     assert "(localhost:5050)" in svg
     assert "icon: http:80" in svg
+    assert "icon: http:81" in svg
 
 
 @pytest.mark.browser
