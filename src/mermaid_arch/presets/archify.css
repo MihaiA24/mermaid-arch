@@ -1,5 +1,5 @@
-/* Archify look: --preset archify. Colour encodes a role, a dashed border a status.
-   Roles: actor app sec data ext danger; statuses: new later planned.
+/* Archify look: --preset archify. Colour encodes a role; a status (new later planned) replaces
+   the role's colour with its own and a dashed border. Roles: actor app sec data ext danger.
    Give a node a role with `class ID ROLE`, a named edge with `class EDGE_ID ROLE`. */
 
 /* Typography is measured before layout: change sizes here, not after rendering. */

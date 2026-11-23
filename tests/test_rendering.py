@@ -127,9 +127,14 @@ def test_label_icon_keeps_its_colours_unless_monochrome(browser_session, icons) 
 
 
 @pytest.mark.browser
-def test_parenthesised_label_text_is_not_an_icon(browser_session, icons) -> None:
-    source = 'flowchart LR\n api["Graph API (localhost:5050)"] --> db["Neo4j (bolt:7687)"]'
-    assert "(localhost:5050)" in render_mermaid(browser_session, source).svg
+def test_label_text_is_not_an_icon(browser_session, icons) -> None:
+    source = (
+        'flowchart LR\n api["Graph API (localhost:5050)"] --> db["Neo4j (bolt:7687)"]\n'
+        ' web["Ports, icon: http:80"]'
+    )
+    svg = render_mermaid(browser_session, source).svg
+    assert "(localhost:5050)" in svg
+    assert "icon: http:80" in svg
 
 
 @pytest.mark.browser
@@ -272,7 +277,7 @@ def test_config_merges_over_a_preset_key_by_key() -> None:
 
 
 def _font(path: Path) -> Path:
-    """A TrueType font, family TestFace, with a wide square for every letter a to z."""
+    """A TrueType font, family `Test & Face`, with a wide square for every letter a to z."""
     letters = [chr(code) for code in range(ord("a"), ord("z") + 1)]
     names = [".notdef", *letters]
     builder = FontBuilder(1000, isTTF=True)
@@ -290,7 +295,7 @@ def _font(path: Path) -> Path:
     builder.setupGlyf(glyphs)
     builder.setupHorizontalMetrics({name: (1000, 0) for name in names})
     builder.setupHorizontalHeader(ascent=800, descent=-200)
-    builder.setupNameTable({"familyName": "TestFace", "styleName": "Regular"})
+    builder.setupNameTable({"familyName": "Test & Face", "styleName": "Regular"})
     builder.setupOS2()
     builder.setupPost()
     builder.save(path)
@@ -301,14 +306,16 @@ def _font(path: Path) -> Path:
 def test_font_lays_text_out_and_travels_inside_the_svg(browser_session, tmp_path: Path) -> None:
     font = _font(tmp_path / "test.ttf")
     graph = "flowchart LR\n a[abcdefghijklmnopqrstuvwxyz] --> b[label]"  # wider than the minimum
-    config = {"fontFamily": '"TestFace"', "themeVariables": {"fontFamily": '"TestFace"'}}
+    config = {"fontFamily": '"Test & Face"', "themeVariables": {"fontFamily": '"Test & Face"'}}
     first = render_mermaid(browser_session, graph, config=config, font_files=[font])
-    assert '@font-face{font-family:"TestFace"' in first.svg
-    assert "data:font/woff2;base64," in first.svg
+    root = ET.fromstring(first.svg)  # well-formed although the family name holds `&`
+    css = "".join(style.text or "" for style in root.iter("{http://www.w3.org/2000/svg}style"))
+    assert '@font-face{font-family:"Test & Face"' in css
+    assert "data:font/woff2;base64," in css
     assert not first.warnings
     assert render_mermaid(browser_session, graph, config=config, font_files=[font]) == first
     fallback = render_mermaid(browser_session, graph, config=config)
-    assert ET.fromstring(first.svg).get("viewBox") != ET.fromstring(fallback.svg).get("viewBox")
+    assert root.get("viewBox") != ET.fromstring(fallback.svg).get("viewBox")
     unnamed = render_mermaid(browser_session, graph, font_files=[font])
     assert [warning.code for warning in unnamed.warnings] == ["mermaid/font-unused"]
     assert "@font-face" not in unnamed.svg
@@ -413,7 +420,7 @@ def test_render_is_the_same_whatever_rendered_before(
     graph = "flowchart TB\n a --> b"
     icon = 'flowchart TB\n a@{ icon: "test:account", label: "A" }'
     shared = {"theme": "forest", "layout": "elk", "themeCSS": ".node rect { stroke-width: 7px; }"}
-    face = {"fontFamily": '"TestFace"', "themeVariables": {"fontFamily": '"TestFace"'}}
+    face = {"fontFamily": '"Test & Face"', "themeVariables": {"fontFamily": '"Test & Face"'}}
     renders: dict[str, tuple[str, dict]] = {
         **{name: (source, {}) for name, source in EVERY_TYPE.items()},
         "dark theme": (graph, {"theme": "dark"}),

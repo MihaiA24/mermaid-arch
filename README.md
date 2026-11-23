@@ -116,13 +116,14 @@ edge's path, so the same CSS colours arrows by role.
 
 `--preset archify` is a built-in shared look ported from a project that rendered with mmdc: a
 dotted canvas, a monospace font stack, roomy spacing, colour per role class (`actor app sec data
-ext danger`) and a dashed border per status (`new later planned`). Nodes take a role with
-`class id role`, named edges with `class edgeId role`. It sits under `--config`, which sits
-under frontmatter; their `themeCSS` adds to the preset's. The preset pins the theme, so
-`--theme` and `--dark-theme` are ignored with a warning: its dark mode follows the reader's
-colour scheme, in the HTML viewer too, where the theme button switches only the page around
-the diagram. A source draws a key of role colours with `%% legend: app Service | data Store`
-and one line under it with `%% legend-arrows: TEXT`; `render --help` lists these directives.
+ext danger`) and a status class (`new later planned`) that replaces the role colour with its own
+and dashes the border. Nodes take a role or status with `class id role`, named edges with
+`class edgeId role`. It sits under `--config`, which sits under frontmatter; their `themeCSS`
+adds to the preset's. The preset pins the theme, so `--theme` and `--dark-theme` are ignored
+with a warning: its dark mode follows the reader's colour scheme, in the HTML viewer too, where
+the theme button switches only the page around the diagram. A source draws a key of role
+colours with `%% legend: app Service | data Store` and one line under it with
+`%% legend-arrows: TEXT`; `render --help` lists these directives.
 
 `--icon-pack NAME=PREFIX[@X.Y.Z]` serves an Iconify pack under another name. Mermaid draws
 `fas:fa-name` inside label text from a pack registered as `fas`, so `--icon-pack fas=mdi` puts

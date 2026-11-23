@@ -15,6 +15,7 @@ from functools import cache
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
+from xml.sax.saxutils import escape
 
 from fontTools import subset
 from fontTools.ttLib import TTFont
@@ -66,6 +67,9 @@ _ICON = re.compile(
     r"|^\s*(?:service|group)\s+[\w-]+\((?P<arch>[a-z0-9-]+:[a-z0-9-]+)\)"
     r"|\b(?P<label>fa[bklrs]?:fa-[\w-]+)"
 )
+# Node shape data, `id@{ ... }`, the only place an `icon:` key means an icon. A brace inside
+# one of its quoted strings does not close it.
+_SHAPE_DATA = re.compile(r"""@\{(?:"[^"]*"|'[^']*'|[^"'}])*\}""")
 _FRONTMATTER = re.compile(r"\A\s*---[^\S\n]*\n.*?\n---[^\S\n]*(?:\n|$)", re.S)
 _DIRECTIVE = re.compile(r"%%\{.*?\}%%", re.S)
 _COMMENT = re.compile(r"^[ \t]*%%[^\n]*(?:\n|$)", re.M)
@@ -395,10 +399,16 @@ def render_mermaid(
     legend, legend_line = _legend(source)
     served = {**FONT_AWESOME_PACKS, **(icon_packs or {})}
     references: dict[str, list[tuple[str, str, int]]] = {}
-    for number, line in enumerate(source.splitlines(), 1):
+    shape_data = [match.span() for match in _SHAPE_DATA.finditer(source)]
+    end = 0
+    for number, line in enumerate(source.splitlines(keepends=True), 1):
+        start, end = end, end + len(line)
         if line.lstrip().startswith("%%"):
             continue
         for match in _ICON.finditer(line):
+            at = start + match.start()
+            if match["shape"] and not any(a < at < b for a, b in shape_data):
+                continue  # `, icon: x:y` in label text is words
             written = match["shape"] or match["arch"] or match["label"]
             name, icon = written.split(":", 1)
             if match["label"]:
@@ -572,7 +582,7 @@ def render_mermaid(
     if embedded:
         # The root element is the first line; the faces go before Mermaid's own <style>.
         head, _, rest = svg.partition("\n")
-        svg = f"{head}\n<style>{''.join(embedded)}</style>\n{rest}"
+        svg = f"{head}\n<style>{escape(''.join(embedded))}</style>\n{rest}"
     return SvgResult(svg, tuple(diagnostics), modified, fonts)
 
 

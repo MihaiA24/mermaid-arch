@@ -12,12 +12,12 @@
   Mermaid config JSON passed as `--config FILE`; each source then carries only `class id role`.
   Frontmatter overrides the file per key, and a `theme` in the file pins the theme as
   frontmatter does. `--preset archify` is a built-in look: a dotted canvas, a monospace font
-  stack, colour per role (`actor`, `app`, `sec`, `data`, `ext`, `danger`) and a dashed border
-  per status (`new`, `later`, `planned`). A node takes a role with `class id role`, a named edge
-  with `class edgeId role`. Dark mode follows the reader's colour scheme, not `--theme`,
-  `--dark-theme` or the HTML viewer's theme button. `--config` and frontmatter override the
-  preset per key, and their `themeCSS` adds to its. Record the full render command, flags
-  included, in each source's `%% Render:` comment.
+  stack, colour per role (`actor`, `app`, `sec`, `data`, `ext`, `danger`) and a status (`new`,
+  `later`, `planned`) that replaces the role colour with its own and dashes the border. A node
+  takes a role or status with `class id role`, a named edge with `class edgeId role`. Dark mode
+  follows the reader's colour scheme, not `--theme`, `--dark-theme` or the HTML viewer's theme
+  button. `--config` and frontmatter override the preset per key, and their `themeCSS` adds to
+  its. Record the full render command, flags included, in each source's `%% Render:` comment.
 - **themeCSS.** `:root` addresses the SVG itself: declare CSS variables and the canvas
   `background` there; Mermaid nests every other selector under it. In frontmatter use
   descendant selectors: Mermaid discards a frontmatter string containing `<`, `>` or
