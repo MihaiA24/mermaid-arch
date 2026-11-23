@@ -140,7 +140,9 @@ role colours with `%% legend: app Service | data Store` and one line under it wi
 `mdi:account` beside a title when the label says `fas:fa-account`. Without the flag, `fa` is
 Iconify's Font Awesome 4 pack and `fas`, `far` and `fab` are Font Awesome 6 solid, regular and
 brands. Label icons keep their own colours, as icon shapes do; `--monochrome-icons` draws them
-in the text colour, Mermaid's default.
+in the text colour, Mermaid's default. Under `--preset archify`, a single-colour icon takes its
+node's role colour, with or without the flag, and a multicolour logo is black with the flag;
+in dark mode a logo sits on a light chip.
 
 Text is laid out with the fonts installed on the rendering machine. `--font FILE`, once per
 weight or style, lays it out with that TTF, OTF, WOFF or WOFF2 file instead, and embeds a
@@ -212,6 +214,23 @@ single-theme diagram keeps its original paper color when the surrounding viewer 
 Browser PNG export can be restricted by SVG HTML labels or canvas limits; the page shows the
 CLI export command when that happens. CLI PNG rendering handles HTML labels directly in
 Chromium.
+
+### Known limitations
+
+`--preset archify` styles flowcharts and sequence diagrams fully, and state diagrams except the
+`<<choice>>` diamond. In class, ER, requirement, mindmap, kanban and block diagrams, some parts
+such as dividers keep the theme's colours. Issue [#2](https://github.com/MihaiA24/mermaid-arch/issues/2)
+tracks these gaps:
+
+- `look: handDrawn` under `--preset archify` leaves nodes uncoloured.
+- Dropping unused CSS can remove a `themeCSS` rule that uses `:not(.x:hover)`.
+- `--font` subsets ignore `text-transform`: where the font is not installed, text whose case
+  `themeCSS` changes can draw glyphs the embedded subset left out.
+- A `--font` file that Chromium accepts but fontTools cannot subset stops the whole batch,
+  not just its source.
+- `--watch` on a Markdown file repeats `options/ignored` once per diagram block on each rebuild.
+- Legend squares copy node colours at render time, so custom dark-mode CSS on nodes does not
+  recolour them. `--preset archify` is not affected.
 
 ## Install the skill
 
