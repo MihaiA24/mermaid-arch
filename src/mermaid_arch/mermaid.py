@@ -586,6 +586,8 @@ def render_mermaid(
     }
     embedded: list[str] = []
     for (path, data, family, weight, style), used in zip(faces, result["usedFaces"], strict=True):
+        # shortcut: each face is cut to all the drawn text, not its own glyphs; split per face
+        # if embedded fonts dominate SVG size.
         if used and result["text"]:
             embedded.append(_embedded_face(data, family, weight, style, result["text"]))
         elif family.lower() not in named:
