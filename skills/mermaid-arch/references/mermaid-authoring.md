@@ -14,10 +14,12 @@
   frontmatter does. `--preset archify` is a built-in look: a dotted canvas, a monospace font
   stack, colour per role (`actor`, `app`, `sec`, `data`, `ext`, `danger`) and a status (`new`,
   `later`, `planned`) that replaces the role colour with its own and dashes the border. A node
-  takes a role or status with `class id role`, a named edge with `class edgeId role`. Dark mode
-  follows the reader's colour scheme, not `--theme`, `--dark-theme` or the HTML viewer's theme
-  button. `--config` and frontmatter override the preset per key, and their `themeCSS` adds to
-  its. Record the full render command, flags included, in each source's `%% Render:` comment.
+  takes a role or status with `class id role`, a named edge with `class edgeId role`. Sequence
+  diagrams omit the bottom participant copies (`sequence.mirrorActors: false`) because they
+  have no IDs for role styling. Dark mode follows the reader's colour scheme, not `--theme`,
+  `--dark-theme` or the HTML viewer's theme button. `--config` and frontmatter override the
+  preset per key, and their `themeCSS` adds to its. Record the full render command, flags
+  included, in each source's `%% Render:` comment.
 - **themeCSS.** `:root` addresses the SVG itself: declare CSS variables and the canvas
   `background` there; Mermaid nests every other selector under it. In frontmatter use
   descendant selectors: Mermaid discards a frontmatter string containing `<`, `>` or
@@ -79,9 +81,10 @@
 - **Fonts.** Text is laid out with the fonts installed on the rendering machine: the receipt's
   `fonts` names them, which explains a layout that differs between machines. `--font FILE`,
   once per weight or style, lays text out with that font file and embeds a WOFF2 subset of the
-  glyphs used, so the SVG looks the same everywhere. `fontFamily` and
-  `themeVariables.fontFamily` must start with its family; `--preset archify` names JetBrains
-  Mono. Some Mermaid theme paths discard hyphenated font-family values: check the PNG.
+  glyphs used, so the SVG looks the same everywhere. Start `fontFamily` with the font's family.
+  If you set `themeVariables.fontFamily`, it takes precedence, so name the family there too.
+  `--preset archify` names JetBrains Mono. Some Mermaid theme paths discard hyphenated
+  font-family values: check the PNG.
 - **Exports.** PNG uses the SVG's natural viewBox dimensions at the requested scale, not an
   arbitrary 800-pixel browser viewport. PDF is one page at the diagram's size. HTML embeds the
   compiled SVG, so the recipient needs neither Mermaid nor network access. SVG is written one

@@ -591,6 +591,8 @@ def render_mermaid(
 
 def load_preset(name: str) -> dict[str, object]:
     """The Mermaid config of built-in preset `name`, one of `PRESETS`."""
+    if name not in PRESETS:
+        raise ValueError(f"unknown preset {name!r}; choose from: {', '.join(PRESETS)}")
     config = json.loads((_PRESETS / f"{name}.json").read_text(encoding="utf-8"))
     css = _PRESETS / f"{name}.css"
     if css.is_file():
@@ -667,6 +669,20 @@ def _embedded_face(path: Path, family: str, weight: str, style: str, text: str) 
 def _legend(source: str) -> tuple[dict[str, object] | None, int | None]:
     """The `%% legend:` directive as render arguments, and its line."""
     found = _LEGEND.search(source)
+    arrows = _LEGEND_ARROWS.search(source)
+    for first, pattern, directive in (
+        (found, _LEGEND, "legend"),
+        (arrows, _LEGEND_ARROWS, "legend-arrows"),
+    ):
+        if first and (duplicate := pattern.search(source, first.end())):
+            raise DiagramError(
+                error(
+                    "mermaid/legend",
+                    f"second `%% {directive}:` directive",
+                    line=source.count("\n", 0, duplicate.start()) + 1,
+                    hint=f"keep all entries in one `%% {directive}:` directive",
+                )
+            )
     if found is None:
         return None, None
     line = source.count("\n", 0, found.start()) + 1
@@ -683,7 +699,6 @@ def _legend(source: str) -> tuple[dict[str, object] | None, int | None]:
                 )
             )
         items.append([role, label.strip()])
-    arrows = _LEGEND_ARROWS.search(source)
     return {"items": items, "arrows": arrows[1].strip() if arrows else None}, line
 
 

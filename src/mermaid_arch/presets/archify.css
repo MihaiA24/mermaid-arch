@@ -35,6 +35,8 @@
     --shadow: rgba(0, 0, 0, .2);
     --fill: #1e293b;
   }
+  .node .label text, .cluster-label text, .edgeLabel text { fill: var(--muted) !important; }
+  .edgeLabel rect.background { fill: var(--bg) !important; }
   /* Dark brand logos need a light chip; single-colour icons use currentColor. */
   .label-icon:not(:has([fill="currentColor"])) {
     background: #e2e8f0; border-radius: 3px; box-shadow: 0 0 0 2px #e2e8f0;
